@@ -78,14 +78,17 @@ class PaperStore:
 
     # -- runs -----------------------------------------------------------------
     def create_run(self, limits: dict[str, Any] | None = None,
-                   protocol_hash: str = "", config_snapshot_ref: str = "") -> str:
+                   protocol_hash: str = "", config_snapshot_ref: str = "",
+                   state: str = "running") -> str:
         rid = self.new_id("run")
+        now = utc_now_iso()
         with self._conn:
             self._conn.execute(
                 "INSERT INTO runs (id, protocol_hash, config_snapshot_ref, state, "
-                "started_at, limits_json, counters_json) VALUES (?,?,?,?,?,?,?)",
-                (rid, protocol_hash, config_snapshot_ref, "running",
-                 utc_now_iso(), json.dumps(limits or {}), "{}"),
+                "started_at, created_at, limits_json, counters_json, "
+                "protocol_revision) VALUES (?,?,?,?,?,?,?,?,?)",
+                (rid, protocol_hash, config_snapshot_ref, state,
+                 now, now, json.dumps(limits or {}), "{}", 1),
             )
         return rid
 
@@ -184,6 +187,7 @@ class PaperStore:
         scanned: bool = False,
         identity_status: str | None = None,
         identity: dict[str, Any] | None = None,
+        access_level: str | None = None,
     ) -> str:
         doc_id = self.new_id("doc")
         with self._conn:
@@ -191,12 +195,13 @@ class PaperStore:
                 "INSERT INTO documents (id, paper_id, source_url, content_hash, "
                 "version, access_status, parse_quality, raw_path, "
                 "parse_warnings_json, page_count, scanned_flag, identity_status, "
-                "identity_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "identity_json, access_level) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (doc_id, paper_id, source_url, content_hash, version,
                  access_status, parse_quality, raw_path,
                  json.dumps(list(parse_warnings or []), ensure_ascii=False),
                  page_count, int(bool(scanned)), identity_status,
-                 json.dumps(identity or {}, ensure_ascii=False)),
+                 json.dumps(identity or {}, ensure_ascii=False),
+                 access_level),
             )
         return doc_id
 
@@ -314,9 +319,10 @@ class PaperStore:
         out = []
         for r in rows:
             d = dict(r)
-            for col in ("location_json", "methods_json", "limitations_json",
-                        "warnings_json"):
-                d[col.replace("_json", "")] = json.loads(d.pop(col) or "[]")
+            for col in ("location_json", "methods_json", "limitations_json"):
+                d[col.replace("_json", "")] = json.loads(d.pop(col) or "{}")
+            # spec section 9 minimum field name: extraction_warnings
+            d["extraction_warnings"] = json.loads(d.pop("warnings_json") or "[]")
             out.append(d)
         return out
 
@@ -385,4 +391,181 @@ class PaperStore:
         row = self._conn.execute(
             "SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         return dict(row) if row is not None else None
+
+    # -- research (Phase 4) -------------------------------------------------
+    def save_run_plan(self, run_id: str, plan: dict[str, Any]) -> None:
+        """Store the validated protocol on a run (state stays 'planned')."""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE runs SET plan_json = ? WHERE id = ?",
+                (json.dumps(plan, ensure_ascii=False, sort_keys=True), run_id),
+            )
+
+    def screenings_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT s.* FROM screenings s JOIN papers p ON p.id = s.paper_id "
+            "WHERE p.run_id = ? ORDER BY s.decided_at, s.id", (run_id,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["criterion_ids"] = json.loads(d.pop("criteria_json") or "[]")
+            out.append(d)
+        return out
+
+    def record_screening(
+        self,
+        paper_id: str,
+        *,
+        stage: str,
+        decision: str,
+        criterion_ids: list[str] | None = None,
+        rationale: str | None = None,
+        evidence_basis: str | None = None,
+        reviewer: str | None = None,
+        prompt_version: str | None = None,
+    ) -> str:
+        """Persist one screening decision (spec section 9 field set)."""
+        sid = self.new_id("scr")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO screenings (id, paper_id, stage, decision, "
+                "criteria_json, rationale, reviewer, prompt_version, "
+                "evidence_basis, decided_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (sid, paper_id, stage, decision,
+                 json.dumps(list(criterion_ids or []), ensure_ascii=False),
+                 rationale, reviewer, prompt_version, evidence_basis,
+                 utc_now_iso()),
+            )
+        return sid
+
+    def record_uncertainty(
+        self,
+        run_id: str,
+        paper_id: str,
+        *,
+        stage: str,
+        reason: str,
+        status: str = "queued",
+    ) -> str:
+        uid = self.new_id("unc")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO uncertainty (id, run_id, paper_id, stage, reason, "
+                "status) VALUES (?,?,?,?,?,?)",
+                (uid, run_id, paper_id, stage, reason, status),
+            )
+        return uid
+
+    def uncertainty_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM uncertainty WHERE run_id = ? ORDER BY id",
+            (run_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_uncertainty(self, uid: str, *, status: str,
+                           reason: str | None = None,
+                           increment_rechecks: bool = False) -> None:
+        sets = ["status = ?", "updated_at = ?"]
+        vals: list[Any] = [status, utc_now_iso()]
+        if reason is not None:
+            sets.append("reason = ?")
+            vals.append(reason)
+        if increment_rechecks:
+            sets.append("rechecks = rechecks + 1")
+        vals.append(uid)
+        with self._conn:
+            self._conn.execute(
+                f"UPDATE uncertainty SET {', '.join(sets)} WHERE id = ?", vals)
+
+    def set_paper_access_level(self, paper_id: str, access_level: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE papers SET access_level = ? WHERE id = ?",
+                (access_level, paper_id),
+            )
+
+    def record_paper_link(
+        self,
+        run_id: str,
+        source_paper_id: str,
+        target_paper_id: str,
+        *,
+        relation: str,
+        confidence: float,
+        signals: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist a dedup / version link (never a silent merge)."""
+        lid = self.new_id("link")
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO paper_links (id, run_id, source_paper_id, "
+                "target_paper_id, relation, confidence, signals_json) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (lid, run_id, source_paper_id, target_paper_id, relation,
+                 float(confidence), json.dumps(signals or {}, ensure_ascii=False)),
+            )
+        return lid
+
+    def paper_links_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM paper_links WHERE run_id = ? ORDER BY id",
+            (run_id,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["signals"] = json.loads(d.pop("signals_json") or "{}")
+            out.append(d)
+        return out
+
+    def record_expansion(
+        self,
+        run_id: str,
+        seed_paper_id: str,
+        *,
+        provider: str,
+        method: str,
+        query: str,
+        result: dict[str, Any],
+    ) -> str:
+        """Persist a bounded-search-expansion result (provenance chain).
+
+        A provider failure during expansion is recorded with
+        ``completeness='incomplete'`` -- never 'complete' (spec section 19).
+        """
+        sid = self.new_id("exp")
+        completeness = result.get("completeness", "incomplete")
+        # Spec section 19: a provider failure OR a keyless skip is never a
+        # complete search. Only a branch that was fully exhausted within the
+        # cap is "complete"; everything else persists as "incomplete".
+        stored = "complete" if completeness == "complete" else "incomplete"
+        prov = result.get("provenance") or {}
+        chain = (prov.get("chain")
+                 or f"seed:{seed_paper_id}->via:{provider}:{method}")
+        filters = {
+            "kind": "expansion",
+            "seed_paper_id": seed_paper_id,
+            "provider": provider,
+            "method": method,
+            "completeness": stored,
+            "deferred": int(result.get("deferred") or 0),
+            "candidates_added": int(result.get("candidates_added") or 0),
+            "result_count": result.get("result_count"),
+            "cursor": result.get("cursor"),
+            "error": result.get("error"),
+            "skip_reason": result.get("skip_reason"),
+            "provenance": chain,
+        }
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO searches (id, run_id, provider, query, filters_json, "
+                "executed_at, cursor, result_count, completeness) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (sid, run_id, provider, f"expand:{provider}",
+                 json.dumps(filters, ensure_ascii=False),
+                 utc_now_iso(),
+                 result.get("cursor"),
+                 result.get("result_count"),
+                 stored),
+            )
+        return sid
 

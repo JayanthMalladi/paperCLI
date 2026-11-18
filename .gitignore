@@ -16,3 +16,4 @@ build/
 .ci-venv/
 out.txt
 err.txt
+nul
