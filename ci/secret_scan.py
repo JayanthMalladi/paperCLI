@@ -38,14 +38,21 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 def _git(root: Path, *args: str) -> str:
+    """Run git and return decoded stdout.
+
+    Binary fixtures in history (PDFs, etc.) make ``git log -p`` emit
+    non-UTF-8 bytes; read in binary and decode with ``replace`` so no byte
+    sequence can crash the scan (mirrors the tree scan's decode below).
+    """
     proc = subprocess.run(
         ["git", "-C", str(root), *args],
         capture_output=True,
-        text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
-    return proc.stdout
+        raise RuntimeError(
+            f"git {' '.join(args)} failed: "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()}")
+    return proc.stdout.decode("utf-8", "replace")
 
 
 def _scan_text(text: str, where: str, hits: list[str]) -> None:
