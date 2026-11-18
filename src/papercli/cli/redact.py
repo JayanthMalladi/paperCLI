@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 __all__ = [
     "MaskingRedactor",
     "mask_text",
     "mask_value",
     "collect_process_secrets",
+    "redact_structure",
 ]
 
 
@@ -95,3 +96,19 @@ def mask_text(text: str, redactor: MaskingRedactor | None = None) -> str:
     if redactor is None:
         redactor = collect_process_secrets()
     return redactor.mask(text)
+
+def redact_structure(value: Any, redactor: MaskingRedactor) -> Any:
+    """Walk a JSON-able structure and mask every string value in place.
+
+    Masking per-string BEFORE serialization guarantees that secrets whose
+    values contain JSON-escaped characters (``"`` and backslash) are
+    removed from the envelope in full -- their escaped rendering would
+    otherwise not match a raw-value substitution on serialized text.
+    """
+    if isinstance(value, str):
+        return redactor.mask(value)
+    if isinstance(value, list):
+        return [redact_structure(item, redactor) for item in value]
+    if isinstance(value, dict):
+        return {k: redact_structure(v, redactor) for k, v in value.items()}
+    return value

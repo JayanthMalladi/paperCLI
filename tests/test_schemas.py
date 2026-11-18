@@ -10,6 +10,35 @@ import json
 
 from papercli.agent_contract import load_schema, schema_names, validate
 from papercli.agent_contract.schemas import SCHEMAS_DIR
+from tests.conftest import run_papers
+
+
+# ---- CLI envelope contract (defect D1) ---------------------------------
+
+def _assert_is_envelope(out: str) -> dict:
+    env = json.loads(out)
+    assert env["schema_version"] == "1.0"
+    assert env["status"] in ("ok", "error")
+    assert set(env) == {"schema_version", "status", "data", "warnings"}
+    return env
+
+
+def test_schema_default_output_is_envelope(tmp_project):
+    # Spec section 6: default stdout is one JSON envelope.
+    rc, out, _ = run_papers("schema", cwd=tmp_project)
+    assert rc == 0
+    env = _assert_is_envelope(out)
+    assert env["status"] == "ok"
+    assert "envelope" in env["data"]["schemas"]
+
+
+def test_schema_json_flag_output_is_envelope(tmp_project):
+    rc, out, _ = run_papers("schema", "--json", cwd=tmp_project)
+    assert rc == 0
+    env = _assert_is_envelope(out)
+    assert env["status"] == "ok"
+    assert "envelope" in env["data"]["schemas"]
+
 
 
 def test_all_schemas_load():
@@ -113,3 +142,46 @@ def test_full_validation_uses_jsonschema_when_present():
     bad = {"evidence_id": "e1", "paper_id": "p1", "access_level": "NOT_A_LEVEL",
            "finding": "f"}
     assert _jsonschema_validate(bad, schema) != []
+
+
+# ---- schema --validate input errors (defect D3) -------------------------
+
+def test_schema_validate_missing_input_exits_2(tmp_project):
+    # A missing --input file is an input error: exit 2, not an internal 1.
+    rc, out, _ = run_papers(
+        "schema", "--validate", "--input", "no-such-file.json",
+        cwd=tmp_project,
+    )
+    assert rc == 2
+    env = json.loads(out)
+    assert env["status"] == "error"
+    assert env["error"]["code"] == "INPUT_FILE_NOT_FOUND"
+    assert "no-such-file.json" in env["error"]["message"]
+
+
+def test_schema_validate_invalid_json_input_exits_2(tmp_project, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not valid json", encoding="utf-8")
+    rc, out, _ = run_papers(
+        "schema", "--validate", "--input", str(bad),
+        cwd=tmp_project,
+    )
+    assert rc == 2
+    env = json.loads(out)
+    assert env["error"]["code"] == "INPUT_INVALID_JSON"
+
+
+def test_schema_validate_valid_input_still_exits_0(tmp_project, tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(
+        {"schema_version": "1.0", "status": "ok", "data": None, "warnings": []}
+    ), encoding="utf-8")
+    rc, out, _ = run_papers(
+        "schema", "--validate", "--input", str(good),
+        cwd=tmp_project,
+    )
+    assert rc == 0
+    env = json.loads(out)
+    assert env["status"] == "ok"
+    assert env["data"]["valid"] is True
+

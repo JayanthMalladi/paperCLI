@@ -86,3 +86,50 @@ def test_collect_process_secrets_tracks_cred_vars(monkeypatch):
         assert "SECRET_TOKEN_A1B2C3" not in red.mask("SECRET_TOKEN_A1B2C3")
     finally:
         del os.environ["PAPERS_TEST_TOKEN"]
+
+# A secret value containing JSON-escape characters. It is NOT a real
+# credential. Its raw form AND its JSON-escaped rendering must both be
+# absent from doctor output (defect D4: masking happens per string value,
+# before serialization, not on the serialized text).
+ESCAPED_SECRET = 'PROBE"\\x"ESCAPED_SECRET_VALUE_9f3k'
+
+
+def test_doctor_redacts_escaped_secret(tmp_project):
+    (tmp_project / ".env").write_text(
+        f"PAPERS_LLM_API_KEY={ESCAPED_SECRET}\n",
+        encoding="utf-8",
+    )
+    rc, out, err = run_papers(
+        "doctor", "--json", "--skip-network",
+        cwd=tmp_project,
+        env_extra={"PAPERS_LLM_API_KEY": ESCAPED_SECRET},
+    )
+    assert rc == 0
+    blob = out + err
+    # The raw value must not leak.
+    assert ESCAPED_SECRET not in blob
+    # And neither may its JSON-escaped rendering (the D4 failure mode).
+    import json as _json
+    assert _json.dumps(ESCAPED_SECRET) not in blob
+    assert _json.dumps(ESCAPED_SECRET)[1:-1] not in blob
+
+
+def test_redact_structure_masks_nested_strings():
+    from papercli.cli.redact import MaskingRedactor, redact_structure
+
+    red = MaskingRedactor([ESCAPED_SECRET, "plain_secret_abc"])
+    structure = {
+        "checks": [{"message": f"key={ESCAPED_SECRET}", "path": "/x"}],
+        "list": [ESCAPED_SECRET, 7, {"inner": "plain_secret_abc"}],
+        "null": None,
+    }
+    masked = redact_structure(structure, red)
+    import json as _json
+    serialized = _json.dumps(masked)
+    assert ESCAPED_SECRET not in serialized
+    assert _json.dumps(ESCAPED_SECRET) not in serialized
+    assert "plain_secret_abc" not in serialized
+    # Non-string values and keys are preserved.
+    assert masked["checks"][0]["path"] == "/x"
+    assert masked["list"][1] == 7
+    assert masked["null"] is None

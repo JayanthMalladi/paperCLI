@@ -209,8 +209,36 @@ def _cmd_schema(args: argparse.Namespace) -> None:
         import json as _json
         data: Any
         if args.input:
-            with open(args.input, encoding="utf-8") as f:
-                data = _json.load(f)
+            try:
+                with open(args.input, encoding="utf-8") as f:
+                    data = _json.load(f)
+            except FileNotFoundError as e:
+                env = error(
+                    "INPUT_FILE_NOT_FOUND",
+                    message=f"Input file not found: {args.input}",
+                    retryable=False,
+                    details={"input": args.input, "exception": type(e).__name__},
+                )
+                emit(env)
+                sys.exit(2)
+            except OSError as e:
+                env = error(
+                    "INPUT_FILE_ERROR",
+                    message=f"Could not read input file: {args.input}",
+                    retryable=False,
+                    details={"input": args.input, "exception": type(e).__name__},
+                )
+                emit(env)
+                sys.exit(2)
+            except _json.JSONDecodeError as e:
+                env = error(
+                    "INPUT_INVALID_JSON",
+                    message=f"Input is not valid JSON: {args.input}",
+                    retryable=False,
+                    details={"input": args.input, "exception": type(e).__name__},
+                )
+                emit(env)
+                sys.exit(2)
         else:
             data = _json.load(sys.stdin)
         schema_name = args.schema_name or "envelope"
@@ -229,11 +257,13 @@ def _cmd_schema(args: argparse.Namespace) -> None:
             emit(env)
         return
 
-    # Default: print all schemas as JSON.
+    # Print all schemas. Per spec section 6 the default stdout is one JSON
+    # envelope: the schemas are carried in ``data`` (the --json form is the
+    # explicit envelope spelling of the same data).
     out: dict[str, dict] = {}
     for name in schema_names():
         out[name] = load_schema(name)
-    emit(out if not args.json else {"schemas": out})
+    emit(ok(data={"schemas": out}))
 
 
 def _validate_generic(data: Any, schema_name: str) -> list[str]:
@@ -290,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_schema.add_argument("--schema-name", default="envelope", help="Schema name for --validate.")
     p_schema.add_argument("--input", default=None, help="Path to JSON file for --validate (else stdin).")
     p_schema.add_argument("--json", action="store_true", default=False,
-                          help="Wrap printed schemas in an envelope.")
+                          help="Explicit envelope form of the schema output (same data as the default).")
     p_schema.set_defaults(func=_cmd_schema)
 
     # version (explicit subcommand, in addition to --version flag)

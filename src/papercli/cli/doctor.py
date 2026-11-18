@@ -22,14 +22,12 @@ emitted, so no key or email value ever reaches stdout (spec section 16).
 
 from __future__ import annotations
 
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from papercli.cli.envelope import error, ok
 from papercli.cli.errors import InternalError
-from papercli.cli.redact import collect_process_secrets
+from papercli.cli.redact import collect_process_secrets, redact_structure
 
 __all__ = ["run_doctor", "CHECK_NAMES"]
 
@@ -282,9 +280,7 @@ def run_doctor(args) -> dict[str, Any]:
     }
     envelope = ok(data=data)
 
-    # Redact the ENTIRE serialized envelope so no secret value leaks.
-    masked = redactor.mask(json.dumps(envelope, ensure_ascii=False, separators=(",", ":")))
-    # Re-emit through the standard emit path by returning the envelope; main()
-    # will serialize. To guarantee redaction we replace the envelope's string
-    # values via a masked re-parse.
-    return json.loads(masked)
+    # Redact every string value in the envelope tree BEFORE serialization,
+    # so secrets containing JSON-escaped characters cannot leak in escaped
+    # form (masking the serialized text would miss their escaped rendering).
+    return redact_structure(envelope, redactor)

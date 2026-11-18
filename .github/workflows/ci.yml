@@ -54,17 +54,11 @@ jobs:
           fi
 
       - name: Fail on committed key patterns
-        run: |
-          # Scan the *committed* tree (not the working copy) for values that
-          # look like real credentials. These patterns match the key formats
-          # our providers use; the repo must never ship one.
-          set -euo pipefail
-          hits="$(git grep -nE 'sk-[A-Za-z0-9]{16,}|xoxb-[A-Za-z0-9-]+|OPENALEX_API_KEY=(?!.*OPENALEX_API_KEY)[A-Za-z0-9]{16,}|PAPERS_LLM_API_KEY=[A-Za-z0-9]{16,}' -- ':!.github' || true)"
-          if [ -n "${hits// /}" ]; then
-            echo "::error::Possible committed credential detected:"
-            echo "${hits}"
-            exit 1
-          fi
+        # The scan is a committed Python helper (ci/secret_scan.py): it greps
+        # the tracked tree AND the full git history with key-shaped patterns
+        # and exits nonzero on any match (or on a git failure). No `|| true`
+        # anywhere, so a scan error can never silently pass the build.
+        run: python ci/secret_scan.py .
 
       - name: Verify .gitignore covers .env
         run: |
