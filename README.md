@@ -8,13 +8,18 @@ substantive claim linked to identified source evidence.
 This is **Phase 1 (Foundation) + Phase 2 (Providers)** of the build.
 The machine contract, configuration system, JSON Schemas, provider
 extension point, storage migration framework, preflight doctor, and
-test/CI scaffolding are in place, and the live provider adapters
-(Unpaywall, Crossref, OpenAlex, arXiv, Semantic Scholar enrichment) plus
-the `search` / `resolve` / `fetch` commands now run against the real APIs
-behind a shared guarded HTTP layer (TLS on, URL guard, per-provider
-pacing, bounded retry, retrieval cache). Document parsing (read/ingest),
-the research pipeline, the model adapter, the detached worker, and
-exporters come in later phases. See **What is implemented vs not** below.
+test/CI scaffolding are in place. Phase 2 adds the live provider
+adapters (Unpaywall, Crossref, OpenAlex, arXiv, Semantic Scholar
+enrichment) and the `search` / `resolve` / `fetch` commands running
+against the real APIs behind a shared guarded HTTP layer (TLS on, URL
+guard, per-provider pacing, bounded retry, retrieval cache). Phase 3
+adds the storage entities (Task/Run/Evidence + document parse-quality
+fields), the lease-based task queue, isolated document parsing (PDF / 
+repository XML / HTML, with scanned-page flagging, the wrong-paper
+identity guard, and exact evidence-location resolution), and the
+`read` / `ingest` commands. The research pipeline, the model adapter,
+the detached worker, and exporters come in later phases. See **What is
+implemented vs not** below.
 
 ## Install
 
@@ -64,6 +69,8 @@ Implemented in Phase 1:
 | `papers search "Q" --providers crossref,openalex,arxiv,s2 --limit 50` | implemented (Phase 2) |
 | `papers resolve "DOI\|arXiv-id"` | implemented (Phase 2) |
 | `papers fetch "IDENTIFIER" --out ./papers` | implemented (Phase 2, retrieval order) |
+| `papers read FILE --pages 1-3 --max-chars 18000` | implemented (Phase 3) |
+| `papers ingest FILE --run RUN_ID` | implemented (Phase 3, wrong-paper guarded) |
 | `papers version`, `papers --help` | implemented (human-readable exceptions) |
 
 The full contract (all commands below exist and are parseable; every
@@ -159,16 +166,33 @@ valid with hard token/call limits set.
   record unavailable), byte-validates PDFs/HTML/XML, and returns
   `access_level` (full_text / html_landing / unavailable; unavailable is
   exit 4).
-- Full JSON envelope + error shape; `NOT_IMPLEMENTED` stubs for every other
-  contract command (each documents its planned phase).
+- Document parsing + storage (Phase 3): `papers read FILE --pages 1-3
+  --max-chars 18000` extracts numbered pages / section / paragraph
+  locations with a JSON envelope (text, locations, warnings);
+  `papers ingest FILE --run RUN_ID` imports a local PDF/HTML/XML into
+  the run's Document registry, reusing the Phase-2 hash + source +
+  access-status persistence. PDF parsing runs in an isolated child
+  process (spec 16); scanned/empty pages are flagged (OCR out of scope,
+  disclosed in the warnings), and a parsed document whose embedded
+  title/DOI does not match the requested paper is rejected (wrong-paper
+  guard), never silently accepted.
+- Durable entities + task queue (Phase 3): migrations `0002`/`0003` add
+  Task/Run/Evidence fields (idempotency key = task type + input/content
+  hash + protocol revision; lease TTL with lost-worker recovery) and a
+  `document_text` index so every evidence excerpt resolves to exact
+  stored source text. A lease-based claim protocol
+  (`claim → leased → running → succeeded/failed/retry_wait`) is shared
+  by standalone workers and external agents.
+- Full JSON envelope + error shape; `NOT_IMPLEMENTED` stubs for every
+  other contract command (each documents its planned phase).
 - Layered config with the documented precedence, `.env` support, and
   secret-reference-only storage. `Config.snapshot()` hook for saving
   effective nonsecret config per run.
 - Nine published JSON Schemas with round-trip validation.
-- Provider extension contract: abstract base + registry, now with live
-  adapters (Unpaywall, Crossref, OpenAlex, arXiv, Semantic Scholar), a
-  shared guarded HTTP layer, and the retrieval cache (Phase 2).
-- SQLite migration framework + `migrations/0001.sql` (durable entities).
+- Provider extension contract: abstract base + registry, live adapters,
+  a shared guarded HTTP layer, and the retrieval cache (Phase 2).
+- SQLite migration framework + `migrations/0001.sql` (durable entities);
+  `0002`/`0003` extend Task/Run/Evidence/Document in place (Phase 3).
 - Preflight doctor: config syntax, contact email, provider credentials,
   model-endpoint reachability/capability (report-only when the key is
   missing), writable storage, migration runner, exporter availability,
@@ -176,11 +200,13 @@ valid with hard token/call limits set.
 - pytest suite + CI (clean-venv install, `pytest`, secret-scan).
 
 **Not yet implemented (later phases)**
-- Document parsing (`read`, `ingest`), evidence locations, imports.
 - Research pipeline: protocol generation, screening, extraction,
-  synthesis, citation audit.
+  synthesis, citation audit (`papers review …`, `evidence list`,
+  `citations audit`).
 - The tested OpenAI-compatible model adapter and budgets.
-- Detached worker, locks/leases, status, cancellation, resume.
+- Detached worker, locks/leases (runtime), status, cancellation, resume.
+- `papers task next/submit` external-agent surface (the lease protocol
+  itself is in place in `papercli.jobs`; the CLI wiring is Phase 6).
 - Exporters (md/pdf/docx/bib/csl/csv).
 - Portable agent skill.
 

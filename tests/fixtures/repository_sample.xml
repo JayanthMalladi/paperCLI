@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <front>
+    <article-meta>
+      <title-group><article-title>Effects of X on Y: A Systematic Review</article-title></title-group>
+      <contrib-group><contrib><surname>Smith</surname><given-names>Ann</given-names></contrib></contrib-group>
+      <article-id pub-type="doi">10.9999/rev.2023</article-id>
+    </article-meta>
+    <abstract>
+      <p>We reviewed the literature on the effect of X on Y.</p>
+    </abstract>
+  </front>
+  <body>
+    <sec>
+      <title>Methods</title>
+      <p>We searched PubMed and Embase through December 2022.</p>
+      <p>Inclusion criteria were cohort studies with at least 50 participants.</p>
+    </sec>
+    <sec>
+      <title>Results</title>
+      <p>Fourteen studies met criteria, involving 3,120 patients.</p>
+      <p>The pooled estimate was 0.42 (95% CI 0.31 to 0.55).</p>
+    </sec>
+  </body>
+</article>
