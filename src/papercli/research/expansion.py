@@ -1,12 +1,14 @@
 """Bounded search expansion (Phase 4, spec sections 8 + 19).
 
-From accepted records, add citation-related candidates (OpenAlex
-``cited_by``/references via the citation-relationship filters; Semantic
-Scholar relations when available, with keyless graceful-degrade) up to the
-protocol's ``max_discovered_records``. Every expansion records its
-provenance chain (seed -> via provider X query/cursor/date) and a provider
-failure marks that branch **incomplete**, never "complete" (spec section
-19: a provider failure is never a complete search).
+From accepted records, add citation-related candidates (OpenAlex forward
+citation discovery via the ``cites`` filter -- the works that CITE the
+seed; see :data:`OPENALEX_EXPANSION_METHOD` for the live-verified
+direction; Semantic Scholar relations when available, with keyless
+graceful-degrade) up to the protocol's ``max_discovered_records``. Every
+expansion records its provenance chain (seed -> via provider X
+query/cursor/date) and a provider failure marks that branch **incomplete**,
+never "complete" (spec section 19: a provider failure is never a complete
+search).
 
 The provider call layer is injectable (``adapter_factory``) so the tests
 drive it with fixture adapters -- no network.
@@ -27,6 +29,34 @@ __all__ = [
 ]
 
 PROVENANCE_KIND = "expansion"
+
+#: The OpenAlex expansion direction: FORWARD discovery -- the works that
+#: CITE the seed (expand-to-citing-works). Live-verified keyless on
+#: 2026-11-18: for a seed with ``cited_by_count``=N, ``cites:<seed>``
+#: (and ``referenced_works:<seed>``) returns N works -- external citing
+#: works, sample publication years >= the seed's, none present in the
+#: seed's own reference list. Despite its name, ``cited_by:<seed>`` is
+#: the BACKWARD direction: it returns the works the seed itself cites
+#: (count ~ the seed's ``referenced_works_count``; all sample items
+#: present in the seed's own reference list, years < the seed's). The
+#: previously shipped ``citations:`` filter does not exist in OpenAlex
+#: and 400s live.
+OPENALEX_EXPANSION_METHOD = "cites"
+
+#: OpenAlex citation-relationship filter fields that actually exist in
+#: the live API (the filter names expansion is allowed to use; OpenAlex
+#: 400s on any other field, e.g. the non-existent ``citations``).
+#: Directions (live-verified 2026-11-18, keyless free tier):
+#: * ``cites:<seed>`` / ``referenced_works:<seed>`` -- FORWARD: the works
+#:   that cite the seed (count ~ the seed's ``cited_by_count``);
+#: * ``cited_by:<seed>`` -- BACKWARD: the works the seed cites (count ~
+#:   the seed's ``referenced_works_count``) -- counter-intuitive naming;
+#: * ``referenced_works_count`` / ``has_references`` -- scalar/boolean
+#:   reference fields, not directional.
+OPENALEX_VALID_CITATION_FILTERS = frozenset({
+    "cited_by", "cites", "referenced_works",
+    "referenced_works_count", "has_references",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +125,20 @@ def _record_ids(rec: Mapping[str, Any]) -> dict[str, str]:
 
 def _openalex_branch(adapter, seed_ids: Mapping[str, str], config: Any,
                      env: Mapping[str, str], cache, per_page: int,
-                     method: str) -> dict[str, Any]:
-    """One OpenAlex citation-relationship query (cited_by or references)."""
+                     method: str = OPENALEX_EXPANSION_METHOD) -> dict[str, Any]:
+    """One OpenAlex citation-relationship query.
+
+    Forward direction by default: ``cites:<work>`` returns the works
+    that CITE the seed (expand-to-citing-works; live-verified -- see
+    :data:`OPENALEX_EXPANSION_METHOD`). ``method`` is the filter field
+    name and must be one of
+    :data:`OPENALEX_VALID_CITATION_FILTERS` (the OpenAlex API 400s on
+    any other field name, e.g. the non-existent ``citations``).
+    """
+    if method not in OPENALEX_VALID_CITATION_FILTERS:
+        raise ValueError(
+            f"OpenAlex filter {method!r} is not a valid citation-relationship "
+            f"field; use one of {sorted(OPENALEX_VALID_CITATION_FILTERS)}")
     work = seed_ids.get("openalex")
     filt = f"{method}:{work}"
     result = adapter.search_works(
@@ -229,14 +271,20 @@ def expand_search(
                          else (seed.get("id") if isinstance(seed, Mapping)
                                and seed.get("run_id") else None))
 
-        # OpenAlex branch (cited_by = the citation-relationship filter).
+        # OpenAlex branch: FORWARD citation discovery (cites = the works
+        # that cite the seed; live-verified filter field -- the
+        # counter-intuitively-named ``cited_by`` filter is the backward
+        # direction, see OPENALEX_EXPANSION_METHOD).
         if seed_ids.get("openalex"):
             try:
                 b = _openalex_branch(oa, seed_ids, config, env, cache,
-                                     per_page, "citations")
+                                     per_page,
+                                     OPENALEX_EXPANSION_METHOD)
             except Exception as e:  # noqa: BLE001 -- branch failure recorded
-                b = {"provider": "openalex", "method": "citations",
-                     "query": f"citations:{seed_ids.get('openalex')}",
+                b = {"provider": "openalex",
+                     "method": OPENALEX_EXPANSION_METHOD,
+                     "query": f"{OPENALEX_EXPANSION_METHOD}:"
+                              f"{seed_ids.get('openalex')}",
                      "cursor": None, "result_count": 0, "total_results": None,
                      "completeness": "incomplete",
                      "error": f"{type(e).__name__}: {e}", "records": [],
