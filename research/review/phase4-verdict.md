@@ -145,3 +145,68 @@ directly instead of string-matching `e.message` (`plan.py:103-124`).
   filter never 400s in tests; the task-submission tests never re-submit an identical
   *rejected* payload, so the crash is not exercised). Recommend adding those two
   cases to the suite alongside the fixes.
+
+
+---
+
+## Re-gate (OPUS re-judge, 2026-11-19) — defect-fix commits `5794342`, `60d9943`,
+## `b6c0b50` on top of this verdict; HEAD `b6c0b50` == origin/main, tree clean
+
+Fresh venv `.vR` (CPython 3.12.8, `uv venv --python 3.12`, `uv pip install -e .[dev,schemas]`;
+project installed keyless, no 3.14). Focused re-gate of D-P4-1..5 only; no re-review of
+areas that passed. No source files modified (read-only on src/tests; verdict append only).
+
+### Re-gate verdict: **PASS**
+
+All five defects verified fixed, new tests in place, full non-network suite green
+(**149 passed, 6 deselected**, up from 144 — the 5 new judge-recommended cases landed in
+`tests/test_phase4_research.py`, which is now 30 passed). No new regressions observed.
+
+| Defect | Status | Evidence |
+|---|---|---|
+| D-P4-1 | **FIXED** | `expansion.py` now ships `OPENALEX_EXPANSION_METHOD = "cites"` + `OPENALEX_VALID_CITATION_FILTERS` guard (non-existent fields raise `ValueError`, never sent); docstring/module header say forward = works that CITE the seed. New offline test `test_expansion_openalex_filter_is_documented_and_forward` pins the filter set, the forward method, and the exact filter string handed to the provider; `citations` must raise. |
+| D-P4-2 | **FIXED** | Migration `0005.sql` (new; `0002.sql` byte-identical at HEAD) drops all-status `idx_task_submissions_payload` and creates PARTIAL `idx_task_submissions_accepted_payload … WHERE status='accepted'`. Accept path no longer `DELETE`s rejected rows. Reproduced the judge's original repro end-to-end via `papers task submit` in a scratch project: bad payload → exit 2 `TASK_SUBMIT_SOURCE_MISMATCH`; identical bad payload again → exit 2 (no `IntegrityError`, no exit 1); later accept of the correct payload → exit 0; **direct sqlite inspection of `task_submissions`: the rejected audit row still EXISTS** (1 rejected + 1 accepted row; partial index present, old index absent). |
+| D-P4-3 | **FIXED** | `_record_rejected` is idempotent (prior-row pre-check on task+payload+code, then `INSERT OR IGNORE`): repeated identical *rejected* resubmit dedupes to the existing audit row and returns the same well-formed exit-2 reject — verified twice in the repro above (row count stayed 1, no crash). |
+| D-P4-4 | **FIXED** | `plan.py` now names fields via `Draft202012Validator(schema).iter_errors(brief)`: `err.path` for the instance location, the missing key read from the schema's own `required` list — no regex on message strings (old parser kept only as the no-jsonschema fallback). Re-ran 14 omission cases + 2-field + wrong-type **end-to-end through `papers review plan`**: all 16 returned exit 2 `CONFIG_REQUIRED` with the correct `details.field` (top-level ×6, `limits.*` ×8, `limits.wall_minutes` wrong-type, two-missing → `outputs`). No regression on the original 14. |
+| D-P4-5 | **FIXED** | `evidence.py` stores `location["excerpt_span"] = [start, end)` into the stored `document_text` row; display excerpt unchanged (stripped/truncated), truncation warning now carries the span. Independent verifier check in scratch DB: for every record `stored_text[start:end] == supporting_excerpt` (3 records: plain, truncated 600-char budget with disclosure, inner-whitespace slice); the shipped test `test_evidence_records_excerpt_span_into_stored_text` pins the same property. |
+
+### Adjudication of the D-P4-1 deviation (`cites:` vs `cited_by:`)
+
+The worker shipped `cites:{seed}` as the forward-expansion filter even though this
+verdict's fix instruction said "`cited_by:` forward / `cites:` or `referenced_works:`
+backward". **The deviation is adjudicated CORRECT; the original fix-note had the
+directions swapped.** Independently re-probed live, keyless, on seed
+`W2919115771` ("Deep learning", Bengio et al. 2015; `cited_by_count`=108921,
+`referenced_works_count`=89):
+
+| filter | meta.count | sampled publication years | direction |
+|---|---|---|---|
+| `cites:` | 104894 (~ cited_by_count) | 2016–2018 (all ≥ seed year) | FORWARD (works that CITE the seed) |
+| `referenced_works:` | 104894 (same as `cites:` — alias) | 2016–2018 | FORWARD |
+| `cited_by:` | 85 (~ referenced_works_count) | 1997–2015 (all ≤ seed year) | BACKWARD (the seed's own references, counter-intuitively named) |
+
+API OQL echo confirms it: `cites:W…` → `oql: get works citing (W…)` with the filter row
+`referenced_works=W…`. So the live-verified field-set the worker documented
+(`{cited_by, cites, referenced_works, referenced_works_count, has_references}`) and the
+one-direction choice (`cites` = forward, matching the expansion goal of citing-work
+discovery) are empirically right; the shipped docstring/method label now say exactly
+that, and the guard rejects any field outside the set. The original verdict's table had
+the `cites`/`cited_by` rows swapped — a defect in this verdict's live-probe readout, not
+in the worker. (The original probe's `count ≈ 280/31` numbers were from a different seed
+and do not change the direction mapping.)
+
+### Suite + hygiene
+
+* Non-network: `pytest tests --deselect tests/test_provider_smoke_network.py` →
+  **149 passed, 6 deselected, 0 failed** in the fresh 3.12 venv (≥ 149 expected;
+  Phase-1/2/3 areas unchanged by the diff — the three fix commits touch only
+  `expansion.py`, `tasks.py`, `0005.sql` (new), `plan.py`, `evidence.py` and
+  `tests/`).
+* `python ci/secret_scan.py` → clean (tree + history).
+* `git status --porcelain` → empty (scratch venv `.vR/` and D:/tmp work all
+  git-ignored / outside the repo).
+* `HEAD b6c0b50 == origin/main`.
+
+**Re-gate issue: PASS.** D-P4-1, D-P4-2, D-P4-3, D-P4-4, D-P4-5 all verified fixed;
+no new regressions; the `cites` vs `cited_by` deviation is upheld over this verdict's
+original fix instruction.
