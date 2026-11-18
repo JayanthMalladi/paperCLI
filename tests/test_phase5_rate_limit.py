@@ -164,23 +164,40 @@ def test_adapter_throttled_becomes_retry_wait():
 
 @pytest.mark.network
 def test_live_model_smoke_records_call_row(tmp_path):
+    """ONE live smoke: a tiny real call (max_tokens ~50) to the configured
+    endpoint, asserting the adapter round-trips AND records a Model-call
+    row. Skips gracefully when the endpoint + key are not configured.
+
+    The endpoint + key come from the documented .env vars
+    (PAPERS_LLM_BASE_URL / PAPERS_LLM_API_KEY, spec section 13), falling
+    back to the config-override names. No secret value is printed.
+    """
     import os
-    from papercli.config.loader import Config, load_env_file
+    from papercli.config.loader import Config
     from papercli.storage.db import PaperStore
 
-    cfg = Config.load(load_dotenv=True)
-    base_url = (cfg.get("model.base_url") or "").strip()
-    model = (cfg.get("model.model") or "").strip()
-    key_ref = (cfg.get("model.api_key_env") or "PAPERS_LLM_API_KEY").strip()
-    key = os.environ.get(key_ref, "")
-    if not base_url or not model or not key:
-        pytest.skip("model endpoint/key not configured (PAPERS_LLM_API_KEY absent)")
+    base_url = (os.environ.get("PAPERS_LLM_BASE_URL")
+                or os.environ.get("PAPERS_MODEL_BASE_URL") or "").strip()
+    model = (os.environ.get("PAPERS_LLM_MODEL")
+             or os.environ.get("PAPERS_MODEL_ID") or "claude-sonnet-5-5").strip()
+    key_ref = "PAPERS_LLM_API_KEY"
+    key = (os.environ.get(key_ref) or "").strip()
+    if not base_url or not key:
+        pytest.skip("model endpoint/key not configured "
+                    "(PAPERS_LLM_BASE_URL / PAPERS_LLM_API_KEY absent)")
+
+    cfg = Config({
+        "model": {"adapter": "openai_compatible", "base_url": base_url,
+                  "model": model, "api_key_env": key_ref},
+        "execution": {"request_timeout_seconds": 30},
+    }, sources=["test"], env={key_ref: key})
 
     store = PaperStore(tmp_path / "smoke.db")
     rid = store.create_run()
     adapter = ModelAdapter.from_config(cfg,
                                        on_record=lambda rec: store.record_model_call(
-                                           rid, outcome=rec["outcome"], model=rec["model"],
+                                           rid, outcome=rec["outcome"],
+                                           model=rec.get("model"),
                                            task_type=rec.get("task_type"),
                                            prompt_hash=rec.get("prompt_hash"),
                                            prompt_version=rec.get("prompt_version"),
@@ -190,11 +207,14 @@ def test_live_model_smoke_records_call_row(tmp_path):
                                            endpoint=rec.get("endpoint"),
                                            api_key_env=rec.get("api_key_env")))
     res = adapter.complete_text(system="Reply with the single word: ping.",
-                               user="ping", task_type="smoke", run_id=rid,
-                               max_tokens=50)
+                                user="ping", task_type="smoke", run_id=rid,
+                                max_tokens=50)
     adapter.close()
     assert res["outcome"] == ModelCallOutcome.SUCCESS, res.get("validation_errors")
     rows = store.model_calls_for_run(rid)
     assert rows and rows[0]["outcome"] == "success"
-    assert rows[0]["endpoint"] == base_url  # selected endpoint is visible
+    # The selected endpoint is visible (nonsecret) in the recorded row; the
+    # secret value is NOT present anywhere in the row.
+    assert rows[0]["endpoint"] == base_url
+    assert key not in str(rows[0])
     store.close()
