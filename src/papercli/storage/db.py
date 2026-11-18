@@ -569,3 +569,114 @@ class PaperStore:
             )
         return sid
 
+    # -- model calls + claims (Phase 5) --------------------------------------
+    def record_model_call(
+        self,
+        run_id: str,
+        *,
+        model: str,
+        outcome: str,
+        task_type: str | None = None,
+        prompt_hash: str | None = None,
+        prompt_version: str | None = None,
+        protocol_revision: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        estimated_cost_usd: float | None = None,
+        usage: dict[str, Any] | None = None,
+        endpoint: str | None = None,
+        api_key_env: str | None = None,
+    ) -> str:
+        """Persist one Model-call row (spec section 11 minimum + Phase 5
+        detail). ``usage`` carries authoritative/estimated cost capture;
+        a null cost + pricing_known=false records an UNKNOWN price
+        (never treated as free -- spec section 12). The secret is stored
+        only as its env-var reference name (spec section 13)."""
+        mid = self.new_id("mcall")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO model_calls (id, run_id, model, prompt_hash, "
+                "prompt_version, input_tokens, output_tokens, "
+                "estimated_cost_usd, outcome, task_type, "
+                "protocol_revision, usage_json, endpoint, api_key_env) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (mid, run_id, model, prompt_hash, prompt_version,
+                 input_tokens, output_tokens, estimated_cost_usd,
+                 outcome, task_type, protocol_revision or "1",
+                 json.dumps(usage or {}, ensure_ascii=False),
+                 endpoint, api_key_env),
+            )
+        return mid
+
+    def model_calls_for_run(self, run_id: str,
+                            outcome: str | None = None) -> list[dict[str, Any]]:
+        q = "SELECT * FROM model_calls WHERE run_id = ?"
+        args: list[Any] = [run_id]
+        if outcome is not None:
+            q += " AND outcome = ?"
+            args.append(outcome)
+        q += " ORDER BY id"
+        rows = self._conn.execute(q, args).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["usage"] = json.loads(d.get("usage_json") or "{}")
+            out.append(d)
+        return out
+
+    def record_claim(
+        self,
+        run_id: str,
+        *,
+        claim_text: str,
+        location: str | None = None,
+        evidence_ids: list[str] | None = None,
+        audit_status: str = "uncertain",
+        is_synthesis: bool = False,
+    ) -> str:
+        """Persist one Claim-ledger row (spec section 10)."""
+        cid = self.new_id("claim")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO claims (id, run_id, draft_location, claim_text, "
+                "evidence_ids_json, audit_status, is_synthesis) VALUES "
+                "(?,?,?,?,?,?,?)",
+                (cid, run_id, location, claim_text,
+                 json.dumps(list(evidence_ids or []), ensure_ascii=False),
+                 audit_status, 1 if is_synthesis else 0),
+            )
+        return cid
+
+    def claims_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM claims WHERE run_id = ? ORDER BY id",
+            (run_id,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["evidence_ids"] = json.loads(d.get("evidence_ids_json") or "[]")
+            d["is_synthesis"] = bool(d.get("is_synthesis"))
+            out.append(d)
+        return out
+
+    def record_artifact(
+        self,
+        run_id: str,
+        *,
+        type_: str,
+        path: str,
+        content_hash: str | None = None,
+        run_revision: str | None = None,
+        generation_status: str = "complete",
+    ) -> str:
+        """Persist one Artifact row (spec section 11)."""
+        aid = self.new_id("art")
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO artifacts (id, run_id, type, path, "
+                "content_hash, run_revision, generation_status) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (aid, run_id, type_, path, content_hash, run_revision,
+                 generation_status),
+            )
+        return aid
