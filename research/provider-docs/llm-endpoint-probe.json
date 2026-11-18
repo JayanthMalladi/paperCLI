@@ -1,0 +1,21 @@
+{
+  "probed": "2026-11-18",
+  "endpoint": "https://api.brocode.live",
+  "protocols": {
+    "openai_chat_completions": "works",
+    "anthropic_messages": "works"
+  },
+  "model_count": 18,
+  "notable_models": [
+    "claude-haiku-5-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-4-6",
+    "claude-opus-5-5",
+    "claude-opus-4-6"
+  ],
+  "structured_output": {
+    "response_format_json_schema": "accepted (HTTP 200) but NOT enforced \u2014 model returned ```json fenced content, not a bare JSON object",
+    "tools": "accepted (HTTP 200) but not invoked in the probe",
+    "adapter_design_consequence": "The OpenAI-compatible adapter must parse JSON leniently (strip fences, repair), validate against JSON Schema after the fact, and re-prompt on validation failure. Do not assume strict structured-output capability."
+  }
+}

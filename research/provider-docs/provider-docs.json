@@ -1,0 +1,355 @@
+{
+  "researched": "2026-11-18",
+  "note": "All facts cited from live docs fetched this date; status: confirmed | contradicted | unconfirmed.",
+  "providers": {
+    "unpaywall": {
+      "docs_read": [
+        "https://unpaywall.org/products/api (SPA; content embedded in /js/app.dd2a222a.js)",
+        "https://unpaywall.org/data-format (same SPA bundle)"
+      ],
+      "auth": {
+        "api_key": false,
+        "required_params": [
+          "email (query param, e.g. ?email=YOUR_EMAIL)"
+        ],
+        "note": "GET https://api.unpaywall.org/v2/{doi}?email=... — 'Requests must include your email as a parameter'; no API key; v2 is the only supported version."
+      },
+      "rate_limit": {
+        "published": "Please limit use to 100,000 calls per day. If you need faster access, download the database snapshot (API page, Rate limits section)",
+        "type": "soft per-day guidance (100,000/day)",
+        "429_documented": false,
+        "retry_after_documented": false
+      },
+      "pagination": {
+        "mechanism": "none — single-DOI lookup endpoint (GET /v2/{doi}); no list/search paging in the supported API",
+        "note": "The list/search endpoint GET /v2/search was RETIRED 2026-09-18 and now returns 410 Gone; docs direct users to OpenAlex search instead."
+      },
+      "key_endpoints": [
+        "GET https://api.unpaywall.org/v2/{doi}?email=YOUR_EMAIL",
+        "GET https://api.unpaywall.org/v2/search?query=... (RETIRED 2026-09-18; now 410 Gone)"
+      ],
+      "response_fields_confirmed": [
+        "oa_status (gold|hybrid|bronze|green|closed)",
+        "best_oa_location (object|null)",
+        "first_oa_location (object|null)",
+        "oa_locations (list of OA Location objects)",
+        "oa_locations_embargoed (beta)",
+        "is_oa",
+        "has_repository_copy",
+        "doi (always lowercase)",
+        "doi_url",
+        "title",
+        "publisher",
+        "year",
+        "published_date",
+        "updated",
+        "genre",
+        "data_standard",
+        "OA Location: host_type (publisher|repository), is_best, license, oa_date, url, version"
+      ],
+      "gotchas": [
+        "doi field is always lowercase; verify returned DOI against requested DOI (case hazard)",
+        "New fields may appear at any time; do not rely on a fixed field count",
+        "z_authors is deprecated; use OpenAlex authorships instead",
+        "oa_date is currently the publication date for every location — do not use it for embargo checks",
+        "closed / no-location records are valid outcomes, not errors",
+        "Semi-annual Unpaywall snapshots stopped; use monthly OpenAlex snapshots"
+      ],
+      "spec_claims_verification": [
+        {
+          "claim": "Required ?email= parameter",
+          "doc_says": "'Requests must include your email as a parameter at the end of the URL'",
+          "status": "confirmed"
+        },
+        {
+          "claim": "No API key required",
+          "doc_says": "'The REST API gives anyone free, programmatic access'; no key mentioned",
+          "status": "confirmed"
+        },
+        {
+          "claim": "100,000 calls/day limit",
+          "doc_says": "'Please limit use to 100,000 calls per day'",
+          "status": "confirmed"
+        },
+        {
+          "claim": "429/Retry-After behavior",
+          "doc_says": "Not published in the live docs; no throttle numbers or retry header documented",
+          "status": "unconfirmed"
+        },
+        {
+          "claim": "Response fields oa_status / best_oa_location / oa_locations",
+          "doc_says": "All present on the data-format page; oa_status in {gold,hybrid,bronze,green,closed}",
+          "status": "confirmed"
+        },
+        {
+          "claim": "DOI normalization gotchas",
+          "doc_says": "doi 'is always lowercase'; doi_url follows Crossref DOI display guidelines (suffix-punctuation detail not enumerated in the Unpaywall doc itself)",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Retired Unpaywall search endpoint must not be used",
+          "doc_says": "'GET /v2/search — Retired 18 September 2026. This endpoint now returns 410 Gone. Use OpenAlex search instead'",
+          "status": "confirmed"
+        }
+      ]
+    },
+    "openalex": {
+      "docs_read": [
+        "https://help.openalex.org/api/authentication/ (fetched 2026-11-18)",
+        "https://help.openalex.org/api/paging.md",
+        "https://help.openalex.org/api/filtering.md",
+        "https://help.openalex.org/access/pricing.md",
+        "https://help.openalex.org/access/example-costs.md",
+        "https://help.openalex.org/data/works.md"
+      ],
+      "auth": {
+        "api_key": "optional — keyless access allowed for casual use; free email-activated key (POST /api-keys) gives 10x daily budget and is required for cursor paging past page 1",
+        "key_sending": [
+          "?api_key= query param",
+          "Authorization: Bearer <key> header"
+        ],
+        "note": "Key states: no key, or a key with a verified email; unactivated key -> 403 key_not_activated; key env-var pattern OPENALEX_API_KEY matches doc guidance"
+      },
+      "rate_limit": {
+        "model": "USD daily budget (credits), not a fixed calls-per-window quota",
+        "keyless": {
+          "daily_budget_usd": 0.1,
+          "per_second": 10,
+          "per_second_basis": "per IP address"
+        },
+        "free_key": {
+          "daily_budget_usd": 1.0,
+          "per_second": 30
+        },
+        "new_account_pace": "first $1 at up to $0.10 every 5 minutes (~50 min of steady use)",
+        "paid_plans": {
+          "member": 20,
+          "member_plus": 100,
+          "partner": "200+/day"
+        },
+        "operation_costs": {
+          "singleton": 0,
+          "list_filter_per_1k": 0.1,
+          "search_per_1k": 1.0,
+          "group_by_list_per_1k": 0.1,
+          "group_by_search_per_1k": 1.0,
+          "content_download_per_1k": 10
+        },
+        "429_reasons": [
+          "requests_per_second",
+          "broad_boolean_query",
+          "wide_or_filter",
+          "semantic_search",
+          "daily_budget"
+        ],
+        "retry_after": "429 bodies give wait seconds; doc: 'Wait the Retry-After seconds (usually 1) and retry'",
+        "usage_headers": [
+          "X-RateLimit-Limit",
+          "X-RateLimit-Remaining",
+          "X-RateLimit-Credits-Used",
+          "X-RateLimit-Reset"
+        ],
+        "usage_endpoint": "GET /rate-limit?api_key=... (free)"
+      },
+      "pagination": {
+        "mechanism": "basic: page & per_page (per_page 1-100; page*per_page <= 10000) + cursor: cursor=* then follow meta.next_cursor; cursor paging past page 1 requires a free API key (keyless follow -> 401)",
+        "note": "Do not cursor-page the whole dataset; use the monthly snapshot instead. per_page=200 still accepted as deprecated legacy behavior."
+      },
+      "key_endpoints": [
+        "GET https://api.openalex.org/works (list/filter/search)",
+        "GET https://api.openalex.org/works/{id|doi} (singleton, free)",
+        "POST https://api.openalex.org/api-keys (issue agent key)",
+        "GET https://api.openalex.org/rate-limit (usage, free)",
+        "GET https://api.openalex.org/authors | /sources | /institutions | /funders | /topics"
+      ],
+      "discovery_filters_confirmed": [
+        "publication_year",
+        "from_publication_date / to_publication_date",
+        "type",
+        "open_access.is_oa (filter) / open_access (select; nested object with is_oa, oa_status, oa_url, any_repository_has_fulltext)",
+        "doi",
+        "has_abstract",
+        "cited_by_count",
+        "author.id",
+        "institutions.id"
+      ],
+      "gotchas": [
+        "open_access is nested: filter open_access.is_oa:true, select the open_access object (selecting open_access.is_oa directly -> 400)",
+        "OR (|) max 100 values per single filter; OR only within one filter, not between filters",
+        "+ decodes to space = AND inside filter values; quote values containing spaces",
+        "comma inside a value -> wrap value in double quotes",
+        "complex boolean searches (>5 operators) and wide OR topic filters and semantic search have lower 1/s limits",
+        "basic paging capped at 10,000 results; beyond that cursor paging (needs key)"
+      ],
+      "spec_claims_verification": [
+        {
+          "claim": "Default (no API key) 'polite pool' rate limit",
+          "doc_says": "No 'polite pool' term exists in current docs; keyless = $0.10/day budget + 10 req/s per IP",
+          "status": "contradicted"
+        },
+        {
+          "claim": "Activated API key ~100k calls per 5 minutes",
+          "doc_says": "Free key = $1/day budget (10x keyless); $0.10 per 1000 list+filter calls => ~10,000 list calls/day, ~1,000 search calls/day; per-second caps 30/s; the $0.10/5-min pace applies only to the FIRST dollar of a NEW account. No 100k-calls/5min figure in the docs.",
+          "status": "contradicted"
+        },
+        {
+          "claim": "Cursor pagination for work search",
+          "doc_says": "pacing.md: 'cursor=* works, but following next_cursor returns a 401' without a key; free key required past page 1; basic paging limit 10,000",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Filters publication_date / type / open_access",
+          "doc_says": "filtering.md lists publication_year, from/to_publication_date, type, open_access.is_oa for works",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Require an activated account key for the overnight profile when pagination needs it",
+          "doc_says": "Keyless cursor paging stops at the first page; deep pagination needs the free key",
+          "status": "confirmed"
+        }
+      ]
+    },
+    "crossref": {
+      "docs_read": [
+        "https://www.crossref.org/documentation/retrieve-metadata/rest-api/ (overview, fetched 2026-11-18)",
+        "https://api.crossref.org/swagger-docs (authoritative OpenAPI 2.0 spec, 88 KB, fetched 2026-11-18)",
+        "https://www.crossref.org/documentation/retrieve-metadata/rest-api/rest-api-filters/",
+        "https://www.crossref.org/documentation/retrieve-metadata/content-negotiation/",
+        "https://www.crossref.org/documentation/retrieve-metadata/simple-text-query/"
+      ],
+      "auth": {
+        "api_key": false,
+        "polite_pool": "mailto query param: 'The email address to identify yourself and access the polite pool' (OpenAPI spec); example in REST API doc: /works?rows=0&mailto=yourmail@company.org",
+        "note": "'No sign-up is required to use the REST API'"
+      },
+      "rate_limit": {
+        "published": "No single hard quota number published in the doc text",
+        "observed_polite_pool": "live 2026-11-18 headers on a mailto request: x-rate-limit-limit: 3, x-rate-limit-interval: 1s, x-concurrency-limit: 3, x-api-pool: polite-array (~3 req/s in polite pool)",
+        "note": "API handles 'over two billion calls per month'; a live un-pooled GET / returned 429. Honor 429 + backoff; treat polite pool as ~3 req/s"
+      },
+      "pagination": {
+        "mechanism": "rows (page size, up to 1000/list request) + offset (skip <= 10,000) + cursor: cursor=* -> next-cursor in response -> cursor=<next>; 'Cursors expire after 5 minutes'; stop when items < rows; docs recommend cursors over offset"
+      },
+      "key_endpoints": [
+        "GET https://api.crossref.org/works (list; query.bibliographic, query.title, query, filter, facet, sort, select, cursor, rows, offset, mailto)",
+        "GET https://api.crossref.org/works/{doi} (singleton; URL-encode the DOI)",
+        "GET https://api.crossref.org/works/{doi}/agency",
+        "GET https://api.crossref.org/journals | /journals/{issn} | /journals/{issn}/works",
+        "GET https://api.crossref.org/funders | /funders/{id} | /funders/{id}/works",
+        "GET https://api.crossref.org/members | /prefixes | /types | /licenses (+ /{id} and /{id}/works variants)"
+      ],
+      "response_format": "JSON (application/vnd.crossref-api-message+json); select param trims fields; HEAD returns headers-only existence check; content negotiation for singletons (XML/BibTeX/Citation styles)",
+      "gotchas": [
+        "URL-encode DOIs in paths (10.1128%2Fmbio...)",
+        "Facet counts are approximate; records with multiple relationships are counted multiple times",
+        "No /events endpoint in the current spec (live GET /events -> 404 route-not-found)",
+        "query.bibliographic only searches reference fields (title, authors, volume, journal name, etc.)",
+        "Cursors expire after 5 minutes if unused",
+        "Some abstracts may be subject to publisher/author copyright even though most metadata is not"
+      ],
+      "spec_claims_verification": [
+        {
+          "claim": "Base URL api.crossref.org",
+          "doc_says": "'Use https://api.crossref.org/ as your base URL'",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Polite pool via mailto",
+          "doc_says": "OpenAPI: mailto 'access the polite pool'; live header x-api-pool: polite-array",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Bibliographic search: query.bibliographic, query.title, filter params",
+          "doc_says": "OpenAPI Queries section documents query.bibliographic; live 200s for query.bibliographic and query.title",
+          "status": "confirmed"
+        },
+        {
+          "claim": "works vs events vs funders endpoints",
+          "doc_says": "Spec lists /works, /funders (confirmed) but NO /events endpoint; live /events -> 404",
+          "status": "contradicted"
+        },
+        {
+          "claim": "Cursor pagination",
+          "doc_says": "OpenAPI cursors: cursor=* / next-cursor / 5-min expiry",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Published rate-limit numbers",
+          "doc_says": "No quota number in doc prose; polite pool observed ~3 req/s via response headers",
+          "status": "unconfirmed"
+        }
+      ]
+    },
+    "arxiv": {
+      "docs_read": [
+        "https://arxiv.org/help/api (redirects to https://info.arxiv.org/help/api/index.html)",
+        "https://info.arxiv.org/help/api/basics.html",
+        "https://info.arxiv.org/help/api/user-manual.html",
+        "https://info.arxiv.org/help/api/tou.html (pacing number lives in the Terms of Use)"
+      ],
+      "auth": {
+        "api_key": false,
+        "note": "No auth for the metadata API. Noncommercial projects: include the acknowledgement 'Thank you to arXiv for use of its open access interoperability'; commercial projects must review brand guidelines / consider arXivLabs affiliation"
+      },
+      "rate_limit": {
+        "published": "TOU: 'When using the legacy APIs (including OAI-PMH, RSS, and the arXiv API), make no more than one request every three seconds, and limit requests to a single connection at a time. These limits may change in the future.'",
+        "value": "1 request / 3 seconds, single connection",
+        "scope": "applies to all machines under your control as a whole; TOU forbids splitting across machines to beat the limit",
+        "429_documented": false
+      },
+      "pagination": {
+        "mechanism": "start (0-based offset) + max_results (page size); no cursor",
+        "note": "Docs examples use max_results=10; no cap on max_results is stated in the fetched pages — verify before bulk pulls"
+      },
+      "key_endpoints": [
+        "GET http://export.arxiv.org/api/query?search_query=... (search; Lucene fields all/ti/au/abs/...)",
+        "GET http://export.arxiv.org/api/query?id_list=id1,id2 (id lookup; no version suffix = latest version)",
+        "GET http://export.arxiv.org/api/query?id_list={id}v{n} (specific version)"
+      ],
+      "response_format": "Atom 1.0 XML feed with OpenSearch extension elements (opensearch:totalResults, startIndex, itemsPerPage); errors are Atom feeds with a single entry (summary + link to explanation)",
+      "url_patterns": {
+        "abs": "https://arxiv.org/abs/{id}v{n} (live-verified: requesting id without suffix returns latest-version link, e.g. .../abs/cond-mat/0207270v3)",
+        "pdf": "https://arxiv.org/pdf/{id}v{n} (live-verified: .../pdf/cond-mat/0207270v3)"
+      },
+      "version_identity": "First posting = v1; each resubmission increments; 'if you want to retrieve the latest version ... enter the arxiv id in the id_list'; 'to retrieve information about a specific version ... appending vn to the id'. Store the vN that appears in <id>/links, not the bare id.",
+      "gotchas": [
+        "abs/pdf links always carry a vN suffix even when the request id had none",
+        "Pacing: max 1 request per 3 s on a single connection across all your machines; no documented 429/Retry-After",
+        "Malformed ids return an Atom error feed (summary message + link), not JSON",
+        "max_results cap for bulk pulls is not documented in the fetched pages"
+      ],
+      "spec_claims_verification": [
+        {
+          "claim": "Base URL export.arxiv.org/api/query",
+          "doc_says": "All examples: http://export.arxiv.org/api/query?search_query=all:electron",
+          "status": "confirmed"
+        },
+        {
+          "claim": "id_list vs search_query semantics",
+          "doc_says": "User's Manual 3.1.1.1 logic table (only/both cases)",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Atom feed response",
+          "doc_says": "'returns the results in the Atom 1.0 format'",
+          "status": "confirmed"
+        },
+        {
+          "claim": "Published request pacing = 3 seconds",
+          "doc_says": "TOU: 'make no more than one request every three seconds, and limit requests to a single connection at a time'",
+          "status": "confirmed"
+        },
+        {
+          "claim": "abs/pdf URL patterns",
+          "doc_says": "Live-verified /abs/{id}v{n} and /pdf/{id}v{n} link elements in Atom responses",
+          "status": "confirmed"
+        },
+        {
+          "claim": "vN version identity",
+          "doc_says": "User's Manual 5.1.1 'A Note on Article Versions'",
+          "status": "confirmed"
+        }
+      ]
+    }
+  }
+}

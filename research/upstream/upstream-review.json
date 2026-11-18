@@ -1,0 +1,66 @@
+{
+  "reviewed": "2026-11-18",
+  "repos": [
+    {
+      "repo": "K-Dense-AI/scientific-agent-skills",
+      "pinned_commit": "ec59a29a03d5c40f73ab40878df04860bc00e876",
+      "license": "MIT",
+      "license_file": "LICENSE.md",
+      "code_reuse_allowed": true,
+      "code_reuse_terms": "MIT: retain copyright notice in copies/substantial portions; patterns and prose freely reusable; soft academic-citation ask for the arXiv paper if the skill materially contributed to a manuscript",
+      "reusable_patterns": [
+        "Seven-phase systematic review workflow: planning -> systematic search -> screening -> extraction/quality -> synthesis -> citation verification -> document generation",
+        "Decoupled search vs processing: live search done by agent/other scripts; search_databases.py is a pure offline pipeline over normalized JSON records (dedupe DOI-first, year filter, rank, summary, json/markdown/bibtex output) with no network calls",
+        "Explicit refusal of raw provider envelopes: input must be a normalized record array",
+        "Citation verification scoped honestly: DOI registration (doi.org handle API) + Crossref metadata only; statuses registered/missing/inconclusive/invalid_syntax; no claim-support or retraction checking",
+        "Bounded transient retries with Retry-After awareness; rate-limit awareness (<=2 req/s to Crossref)",
+        "BibTeX key scheme: first_author+year with numeric collision suffixes",
+        "Metadata enrichment as mandatory phase: treat API records as incomplete; never invent fields; distinguish missing vs not-applicable",
+        "Credential hygiene: each API key sent only to its own service, never bundled"
+      ],
+      "risks": [
+        "No claim-to-citation matching; DOI registration != citation support (their own pitfall #4)",
+        "Crossref coverage gaps -> inconclusive/metadata_unavailable buckets need manual review",
+        "DOI regex extraction is inherently ambiguous in prose",
+        "No retraction/correction screening",
+        "Skill is prose-driven: agent executes phases manually; scripts are narrow offline helpers, not an automated pipeline",
+        "Optional paid external dependencies (parallel-cli, OpenRouter) for discovery/schematics",
+        "PRISMA/systematic rigor depends on agent discipline, not code enforcement"
+      ]
+    },
+    {
+      "repo": "google-research/paper-orchestra",
+      "pinned_commit": "d9bae997e793a015ed38bb1605be9eb58c00284f",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "notice_file": null,
+      "code_reuse_allowed": true,
+      "code_reuse_terms": "Apache-2.0 permissive: may copy code if license/copyright retained, changes stated, license distributed; includes patent grant; ideas/patterns freely reusable; no NOTICE obligations",
+      "reusable_patterns": [
+        "Four-stage agent pipeline: OutlineAgent (plan -> outline.json) -> HybridLiteratureAgent (discovery+synthesis) -> SectionWritingAgent (body) -> ContentRefinementAgent (critique, <=3 reflection rounds + VLM format review)",
+        "Planning artifact as typed JSON outline: intro_related_work_plan (search_directions, subsection limitation_search_queries) + section_plan blueprint with citation_hints; discovery tasks are mechanically derived from the plan (_collect_search_tasks)",
+        "Hybrid discovery: parallel LLM+Google-Search candidate discovery (10-thread pool), then sequential rate-limited Semantic Scholar enrichment with cutoff filtering and title normalization dedup",
+        "Typed Pydantic intermediates: CandidatePaper, DiscoveryResult (injected into prompts via model_json_schema()), PaperData (enriched record), WriterOutput",
+        "citation_map.json: key->(title/authors/venue/year/abstract) lookup consumed by section writers; bibtex generated from the same registry",
+        "Citation coverage hard rule in synthesis: min_cite_paper_count = 90% of collected papers",
+        "Coarse batch-level resume: paper_writing_log.json records per-paper success for skipping completed work in batch runs",
+        "Whole-pipeline retry loop (max 3 tries) around the agent chain"
+      ],
+      "risks": [
+        "API key printed in plaintext at import: utils/scholar_utils.py line 28 `print(f\"Using S2 API Key: {S2_API_KEY}\")` \u2014 must NOT copy",
+        "Task tracking is in-memory only (per-process registry + processed-task set; nothing persisted); crash loses all discovery progress \u2014 confirmed in HybridLiteratureAgent.run()",
+        "Provider-locked: hard-coded Gemini model defaults (gemini-3.1-pro-preview / gemini-3-flash-preview)",
+        "Silent degradation: discovery retries 3x then returns empty candidates; enrichment exceptions swallowed with bare `except: pass`",
+        "Fuzzy title matching threshold >70 with year-hint +10 bias can select the wrong record",
+        "Abstracts truncated to 1500 chars \u2014 synthesis context loss",
+        "No feedback from critique back into planning; critique failure only triggers full pipeline restart",
+        "Cutoff-date filtering logic duplicated in agent and scholar_utils with divergent semantics",
+        "Sequential 1s sleep between Semantic Scholar queries is slow for large candidate sets"
+      ]
+    }
+  ],
+  "verdicts": {
+    "kdense": "MIT \u2014 patterns/prose freely reusable; code copyable with attribution retained",
+    "paperorchestra": "Apache-2.0 \u2014 patterns freely reusable; code copyable with license retention + change statements; borrow architecture, do not lift scholar_utils.py as-is (key-printing defect, crude fuzzy matching)"
+  }
+}

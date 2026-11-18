@@ -1,0 +1,115 @@
+Simple Text Query - Crossref
+Menu
+Home
+Home
+Join
+Members
+Documentation
+Forum
+Blog
+Contact
+Get involved
+Overview
+Become a member
+Events
+Service providers
+Special programs
+Working for you
+Data citation
+Sponsors program
+Ambassadors
+Working groups
+Code of conduct
+Fees
+API Learning Hub
+Find a service
+Overview
+Content Registration
+Metadata Retrieval
+Metadata Plus
+Grant Linking System (GLS)
+Research Organization Registry (ROR)
+Open Funder Registry (OFR)
+Support for Reference Linking
+Similarity Check
+Cited-by
+Crossmark
+Documentation
+Overview
+Setting up as a member
+The Research Nexus
+Metadata principles and practices
+Register and maintain your records
+Schema library
+Reports
+Crossmark
+Cited-by
+Similarity Check
+Metadata Retrieval
+About us
+Overview
+Operations & sustainability
+Board & governance
+Publications
+Strategic agenda and roadmap
+Our truths
+Our people
+Organisation chart
+Jobs
+Latest blog posts
+2026 October 20
+Share your research integrity experiences with Crossref and STM
+As we approach the end of 2026, research integrity remains a critical focus for the scholarly publishing ecosystem: fast technological advancements are constantly pushing the boundaries of integrity, impacting how everyone in this space interacts with the scholarly record.
+...Find out more
+2026 October 06
+How Grobid uses Crossref metadata to enrich bibliographic information
+Crossref members register around 37,000 records daily. All this metadata is openly shared with the global scholarly community through our free APIs. We receive over two billion calls to our API each month, signalling its use by hundreds of tools and services worldwide, supporting the discovery and assessment of scholarly metadata. As part of a new series in our blog, we will spotlight the diversity of tools and integrations that rely on Crossref metadata to serve the scholarly community. In this initial post, we chat to Luca Foppiano, the developer and maintainer of Grobid1, to learn about how Grobid uses Crossref metadata to improve the extraction and enrichment of bibliographic information from scholarly PDFs.
+...Find out more
+2026 September 21
+2026 board election slate
+On behalf of the Nominating Committee, I’m pleased to share the slate of candidates for the 2026 board election. Every active member organisation is invited to submit a ballot to elect the incoming board class.
+...Find out more
+2026 September 17
+July 2026 board meeting summary
+We’re providing a summary of the board’s July 2026 meeting. The July board meeting is our only in-person meeting. The board gathers for two days of strategic thinking and long-range planning, as well as conducting annual board business. This year, we focused on allocating surplus funds we have on hand to invest in a three-year project to redesign the content system. In a related discussion, we decided to lower content registration fees starting in 2027 because we’ve had a demonstrated history of generating surpluses, exceeding what we need to run Crossref. We also discussed the board structure, as part of our regular review of stakeholder governance. And we conducted annual board business, such as approving the audited financial statements and reviewed our risk register and mitigation plans.
+The
+resolutions are available
+on the dedicated section of our website, which also lists the members of the Board and offers further information about our governance.
+We also managed to squeeze in watching a World Cup game over dinner.
+...Find out more
+Menu
+search
+Home
+>
+Documentation
+>
+Metadata Retrieval
+>
+Simple Text Query
+Documentation Menu
+Simple Text Query
+The Simple Text Query form allows you to retrieve DOI names for journal articles, books, and chapters by cutting and pasting a reference or reference list into the query box. References are entered as a standard bibliographic entry, such as:
+Clow GD, McKay CP, Simmons Jr. GM, and Wharton RA, Jr. 1988. Climatological observations and predicted sublimation rates at Lake Hoare, Antarctica. Journal of Climate 1:715-728.
+For best results, each reference should appear on a single line. When submitting multiple references, you can enter them in alphabetical order, or as a numbered list. Separate each reference using a blank line.
+Using Simple Text Query to match references with DOIs
+If you are a member and want to match and deposit references, please see
+using Simple Text Query to add references
+. If you just want to match references to DOIs, follow these instructions.
+Go to the
+Simple Text Query form
+and enter a reference or list of references into the search box.
+Optional:
+select
+List all possible DOIs per reference
+to return multiple results
+select
+Include PubMed IDs in results
+to include PubMed IDs
+Click
+Submit
+The system attempts to find exactly one DOI for each reference. For some citations, multiple DOIs may be deposited for an item, or the metadata in either the reference or record registered with us is not sufficient to make a single match. Selecting
+List All Possible DOIs
+will return multiple results which will need to be evaluated to select the appropriate DOI.
+We want our members to match and register as many references as possible, so there are no limits on the use of this service. We provide space for 1,000 references per submission.
+Page maintainer: Isaac Farley
+Last updated: 2020-October-06

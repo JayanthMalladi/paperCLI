@@ -1,0 +1,11 @@
+pinned-commits.txt — upstream review pins (PaperCLI build)
+Reviewed 2026-11-18, shallow clones at research/upstream/
+
+K-Dense-AI/scientific-agent-skills
+  commit: ec59a29a03d5c40f73ab40878df04860bc00e876
+  subject: chore: update security scan report [skip ci]
+  license: MIT (LICENSE.md; GitHub API license=MIT)
+
+google-research/paper-orchestra
+  commit: d9bae997e793a015ed38bb1605be9eb58c00284f
+  license: Apache-2.0 (LICENSE; GitHub API license=Apache-2.0; no NOTICE file)

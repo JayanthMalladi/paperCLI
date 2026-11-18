@@ -1,0 +1,5 @@
+.env
+__pycache__/
+*.pyc
+research/upstream/paper-orchestra/
+research/upstream/scientific-agent-skills/

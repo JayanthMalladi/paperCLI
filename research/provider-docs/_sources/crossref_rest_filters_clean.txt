@@ -1,0 +1,444 @@
+REST API filters - Crossref
+Menu
+Home
+Home
+Join
+Members
+Documentation
+Forum
+Blog
+Contact
+Get involved
+Overview
+Become a member
+Events
+Service providers
+Special programs
+Working for you
+Data citation
+Sponsors program
+Ambassadors
+Working groups
+Code of conduct
+Fees
+API Learning Hub
+Find a service
+Overview
+Content Registration
+Metadata Retrieval
+Metadata Plus
+Grant Linking System (GLS)
+Research Organization Registry (ROR)
+Open Funder Registry (OFR)
+Support for Reference Linking
+Similarity Check
+Cited-by
+Crossmark
+Documentation
+Overview
+Setting up as a member
+The Research Nexus
+Metadata principles and practices
+Register and maintain your records
+Schema library
+Reports
+Crossmark
+Cited-by
+Similarity Check
+Metadata Retrieval
+About us
+Overview
+Operations & sustainability
+Board & governance
+Publications
+Strategic agenda and roadmap
+Our truths
+Our people
+Organisation chart
+Jobs
+Latest blog posts
+2026 October 20
+Share your research integrity experiences with Crossref and STM
+As we approach the end of 2026, research integrity remains a critical focus for the scholarly publishing ecosystem: fast technological advancements are constantly pushing the boundaries of integrity, impacting how everyone in this space interacts with the scholarly record.
+...Find out more
+2026 October 06
+How Grobid uses Crossref metadata to enrich bibliographic information
+Crossref members register around 37,000 records daily. All this metadata is openly shared with the global scholarly community through our free APIs. We receive over two billion calls to our API each month, signalling its use by hundreds of tools and services worldwide, supporting the discovery and assessment of scholarly metadata. As part of a new series in our blog, we will spotlight the diversity of tools and integrations that rely on Crossref metadata to serve the scholarly community. In this initial post, we chat to Luca Foppiano, the developer and maintainer of Grobid1, to learn about how Grobid uses Crossref metadata to improve the extraction and enrichment of bibliographic information from scholarly PDFs.
+...Find out more
+2026 September 21
+2026 board election slate
+On behalf of the Nominating Committee, I’m pleased to share the slate of candidates for the 2026 board election. Every active member organisation is invited to submit a ballot to elect the incoming board class.
+...Find out more
+2026 September 17
+July 2026 board meeting summary
+We’re providing a summary of the board’s July 2026 meeting. The July board meeting is our only in-person meeting. The board gathers for two days of strategic thinking and long-range planning, as well as conducting annual board business. This year, we focused on allocating surplus funds we have on hand to invest in a three-year project to redesign the content system. In a related discussion, we decided to lower content registration fees starting in 2027 because we’ve had a demonstrated history of generating surpluses, exceeding what we need to run Crossref. We also discussed the board structure, as part of our regular review of stakeholder governance. And we conducted annual board business, such as approving the audited financial statements and reviewed our risk register and mitigation plans.
+The
+resolutions are available
+on the dedicated section of our website, which also lists the members of the Board and offers further information about our governance.
+We also managed to squeeze in watching a World Cup game over dinner.
+...Find out more
+Menu
+search
+Home
+>
+Documentation
+>
+Metadata Retrieval
+>
+REST API
+>
+REST API filters
+Documentation Menu
+REST API filters
+Records retrieved from the Crossref REST API can be filtered to give more precise results. On this page, we list and define the available filters for each available
+works
+endpoint. See
+here
+for more information about endpoints.
+Filters are added using the
+filter
+parameter, with filters and values separated by a colon, and filters separated by a comma. For example:
+https://api.crossref.org/v1/works?filter=from-created-date:2023-04-01T12,until-created-date:2023-04-01T12
+The journals, types, licenses, and members endpoints do not have filters. Other request parameters can be found in our
+Swagger documentation
+.
+On this page
+Below are filters for the following endpoints:
+Members
+Funders
+Works
+Members endpoint filters
+The
+/members
+endpoint has the following filters:
+filter
+value
+description
+backfile-doi-count
+integer
+members with given count of DOIs for material published more than two years ago.
+current-doi-count
+integer
+members with given count of DOIs for material published within last two years .
+prefix
+string
+members with given DOI prefix, e.g. 10.5555.
+Funders endpoint filters
+filter
+description
+location
+string
+Funders located in the given country.
+Note that the country name is case sensitive, so
+location=France
+gives different results to
+location=france
+.
+Works endpoint filters
+The works endpoint has a very large number of filters. They can be used for any endpoint ending in works, for example
+members/works
+,
+journals/works
+, or
+works
+. We have broken then down into three types by function:
+Filter by date
+Find out whether a value is present
+Search for a specific value
+Filter by date
+You can filter results for works before a certain date, after a certain date, or between two dates. Note that date ranges are inclusive so, for example, to get all metadata updated on a single day you can use the same day for the from and until filters, e.g.
+https://api.crossref.org/v1/works?filter=from-update-date:2025-10-01,until-update-date:2025-10-01
+The following filters related to when metadata was received. ISO-formatted time stamps can be used with these filters. For example, any of the following are valid:
+2025, 2025-01, 2025-01-04, 2025-01-04T00, 2025-01-04T00:12, 2025-01-04T00:12:32.
+filter
+description
+from-created-date
+First deposited at or after the given date or time
+until-created-date
+First deposited before the given date or time
+from-update-date
+Deposited or redeposited at or after the given date or time, includes changes from the stewarding member
+until-update-date
+Deposited or redeposited at or before the given date or time, includes changes from the stewarding member
+from-deposit-date
+Deposited or redeposited at or after the given date or time (identical to from-update-date)
+until-deposit-date
+Deposited or redeposited on or before the given date or time (identical to until-update-date)
+from-index-date
+Reindexed in the API at or after the given date or time; includes changes from members, Crossref, and external sources.
+until-index-date
+Reindexed on or before the given date or time; includes changes from members, Crossref, and external sources.
+Date filters relating to the editorial and publication process. These and the following date filters take ISO-formatted dates as inputs, e.g. 2025, 2025-01, or 2025-01-05.
+filter
+description
+from-pub-date
+The publication date is on or after the given date
+until-pub-date
+The publication date is on or before the given date
+from-print-pub-date
+Published in print on or after the given date
+until-print-pub-date
+Published in print on or before the given date
+from-online-pub-date
+Published online on or after the given date
+until-online-pub-date
+Published online date is on or before the given date
+from-accepted-date
+Accepted for publication on or after the given date
+until-accepted-date
+Accepted for publication on or before the given date
+from-posted-date
+Posted online on or after the given date, for the
+posted-content
+type
+until-posted-date
+Posted online on or before the given date, for the
+posted-content
+type
+from-approved-date
+Approved on or after the given date; for types
+dissertation
+,
+standard
+, and
+report
+until-approved-date
+Approved date is on or before the given date; for types
+dissertation
+,
+standard
+, and
+report
+from-awarded-date
+Awarded on or after the given date, for the
+grant
+type
+until-awarded-date
+Award on or before the given date, for the
+grant
+type
+Date filters related content items in a journal:
+filter
+description
+from-issued-date
+Issued on or after the given date
+until-issued-date
+Issued on or before the given date
+Date filters related to content items in a conference:
+filter
+description
+from-event-start-date
+Event start date is on or after the given date
+until-event-start-date
+Event start date is on or before the given date
+from-event-end-date
+Event end date is on or after the given date
+until-event-end-date
+Event end date is on or before the given date
+Find out whether a value is present
+There are a number of filters that take a boolean value (0 or 1, true or false) that return content items that have a value in one or more metadata fields. For example:
+https://api.crossref.org/v1/works?filter=has-ror-id:1
+The following filters relate to persistent identifiers:
+filter
+identifier present (or not present)
+has-orcid
+ORCID ID
+has-authenticated-orcid
+ORCID ID where the ORCID owner has authenticated with ORCID (asserted by the depositing member)
+has-clinical-trial-number
+Clinical trial number
+has-funder-doi
+Funder DOI
+has-ror-id
+ROR ID
+has-affiliation-ror-id
+ROR ID in
+author affiliation
+has-funder-ror-id
+ROR ID as
+funder identifier
+has-alias
+The record has other DOIs
+aliased
+to it
+has-prime-doi
+The record has been
+aliased
+and redirects to another DOI
+The following filters return items with a given property (one or more times):
+filter
+value present (or not present)
+has-abstract
+Abstract
+has-license
+One or more licenses for the content
+has-update-policy
+Contains a link to a policy describing how updates are made
+has-domain-restriction
+The member restricts content to speciffic domains (part of
+Crossmark
+)
+has-assertion
+Assertions (part of
+Crossmark
+)
+has-content-domain
+A content domain (part to
+Crossmark
+)
+These filters relate to presence of a relationship to another item or organisation
+filter
+Relationship type
+has-affiliation
+has and author affiliated institution
+has-award
+was funded by an award
+has-event
+associated with an event
+has-funder
+includes funder metadata
+has-relation
+has any kind of relationship
+has-update
+has been updated by another DOI (e.g., via a correction or retraction)
+is-update
+is an update to another DOI (e.g., is a correction or retraction)
+has-full-text
+includes one or more full-text links
+has-references
+works that have a list of references
+has-archive
+includes the name of an archive partner
+Search for a specific value
+These filters look for an exact match between the input value and the value in one or more fields in the metadata. If you’re looking across several fields, for values that contain a word or short phrase, or fuzzy matching , you can
+use a query
+.
+Apply these filters by provdiing the filter name and the value you would like to apply, for example to look for works in the serial with ISSN 1097-4547:
+https://api.crossref.org/v1/works?filter=issn:1097-4547
+Filters related to identifiers
+filter
+filter by the following metadata
+alternative-id
+Alternative ID, which may be a member-specific ID, or any other identifier a a member has provided
+doi
+The content item DOI
+orcid
+Contributor ORCID IDs
+ror-id
+Contributor affiliation or funding ROR IDs
+isbn
+The record’s ISBN
+issn
+The ISSN of the serial containing the item (e.g., 1234-5678)
+member
+Crossref member ID of the member who owns the record
+prefix
+the DOI owner prefix (e.g. 10.5555)
+Filters for metadata properties:
+filter
+filter by the following metadata
+article-number
+Article number
+group-title
+Group title (used by content items of type
+posted-content
+)
+license.url
+License_ref is the given url
+license.version
+The license applies_to the given version (can be
+vor
+,
+am
+,
+tdm
+, or
+stm-asf
+)
+license.delay
+delay-in-days
+: how long after publication a license applies. The filter finds all values >= the given number
+type
+Metadata records whose type equals given type. Use one of the ID values in the /types endpoint
+type-name
+Type name. Use one of the name values in the
+/types
+endpoint
+assertion
+Name of an assertion (part of
+Crossmark
+)
+assertion-group
+Name of an assertion group (part of
+Crossmark
+)
+content-domain
+The domain name on which the content will appear (part of
+Crossmark
+)
+Filters related to funding metadata:
+filter
+filter by the following metadata
+award.funder
+Award funder is the given funder
+award.number
+Award number is the given number
+gte-award-amount
+Award is greater than or equal to the given number
+lte-award-amount
+Award is less than or equal to the given number
+funder
+Funding metadata includes the given Funder ID
+funder-doi-asserted-by
+Funder DOI was asserted by the given body (
+crossref
+or
+publisher
+)
+Filters for relationships:
+filter
+filter by the following metadata
+archive
+Archive partner has the given name
+clinical-trial-number
+Has the given clinical trial number
+container-title
+Container name (e.g., journal, conference, or book) exactly matches the given value
+full-text.type
+Resource element’s content_type attribute equals given version mime type (e.g., application/pdf)
+full-text.application
+Resource link has the given application (
+text-mining
+,
+similarity-checking
+or
+unspecified
+)
+full-text.version
+Resource element’s content_version attribute is the given version
+relation.type
+Has a relation with the given type (e.g.,
+is-referenced-by
+,
+is-parent-of
+,
+is-preprint-of
+)
+relation.object-type
+Is related to an item of this type (e.g.,
+doi
+,
+issn
+)
+relation.object
+Is related to the given identifier
+update-type
+Is an update of the given type (e.g.,
+correction
+or
+retraction
+)
+updates
+Is an update to the given DOI
+Page maintainer: Martyn Rittman
+Last updated: 2025-October-16
