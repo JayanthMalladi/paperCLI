@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/run_summary/1.0",
+  "title": "Run summary",
+  "description": "Output-bundle run summary: state, limits, usage, counts, failures, and artifact inventory. A successful status call can describe a failed or partial run.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "state"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "queued",
+        "running",
+        "paused",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "started_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "wall_minutes",
+        "max_search_queries",
+        "max_discovered_records",
+        "max_full_text_papers",
+        "max_model_calls",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_estimated_cost_usd"
+      ],
+      "properties": {
+        "wall_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_search_queries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_discovered_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_full_text_papers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_estimated_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "description": "Consumed counts. Dollar figures are estimates unless authoritative provider usage is available.",
+      "properties": {
+        "search_queries": {
+          "type": "integer"
+        },
+        "discovered_records": {
+          "type": "integer"
+        },
+        "full_text_papers": {
+          "type": "integer"
+        },
+        "model_calls": {
+          "type": "integer"
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "estimated_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "counts": {
+      "type": "object",
+      "description": "Discovered/deduplicated/screened/retrieved/read/cited counts."
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generation_status": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "partial",
+              "missing",
+              "failed"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

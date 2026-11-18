@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/claims/1.0",
+  "title": "Claim ledger entry",
+  "description": "A claim in the draft linked to supporting evidence and an audit label. Unsupported claims must be removed, narrowed, or prominently marked unresolved before finalization.",
+  "type": "object",
+  "required": [
+    "claim_id",
+    "text",
+    "evidence_ids",
+    "audit_status"
+  ],
+  "properties": {
+    "claim_id": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string",
+      "description": "Stable location of the claim in the draft."
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audit_status": {
+      "type": "string",
+      "enum": [
+        "supported",
+        "partially_supported",
+        "unsupported",
+        "uncertain",
+        "inference"
+      ]
+    },
+    "is_synthesis": {
+      "type": "boolean",
+      "description": "True when the claim is cross-paper synthesis or author interpretation, not a single source."
+    }
+  },
+  "additionalProperties": true
+}

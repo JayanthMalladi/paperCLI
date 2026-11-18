@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/brief/1.0",
+  "title": "Research brief",
+  "description": "The research brief a user or agent supplies before a review. Defaults may fill optional fields, but they must appear in the saved protocol.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "question",
+    "purpose",
+    "scope",
+    "outputs",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "review_type": {
+      "type": "string",
+      "enum": [
+        "narrative",
+        "systematic"
+      ]
+    },
+    "scope": {
+      "type": [
+        "string",
+        "object"
+      ]
+    },
+    "date_range": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "en"
+      ]
+    },
+    "include_preprints": {
+      "type": "boolean",
+      "default": true
+    },
+    "seed_identifiers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "inclusion_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exclusion_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "themes_to_investigate": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "md",
+          "pdf",
+          "docx",
+          "bib",
+          "csl",
+          "csv"
+        ]
+      },
+      "minItems": 1
+    },
+    "citation_style": {
+      "type": "string",
+      "default": "ieee"
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "wall_minutes",
+        "max_search_queries",
+        "max_discovered_records",
+        "max_full_text_papers",
+        "max_model_calls",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_estimated_cost_usd"
+      ],
+      "properties": {
+        "wall_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_search_queries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_discovered_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_full_text_papers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_estimated_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

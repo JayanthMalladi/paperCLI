@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/bibliography/1.0",
+  "title": "Bibliography registry",
+  "description": "Canonical registry of references. Every reference in an export is generated from this registry; agents cannot inject arbitrary entries without validation.",
+  "type": "object",
+  "required": [
+    "references"
+  ],
+  "properties": {
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "citation_key"
+        ],
+        "properties": {
+          "citation_key": {
+            "type": "string"
+          },
+          "doi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "venue": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identifiers": {
+            "type": "object",
+            "description": "Canonical IDs: doi, arxiv, pmid, pmcid, url."
+          },
+          "provenance": {
+            "type": "object",
+            "description": "Which provider(s) supplied this record."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

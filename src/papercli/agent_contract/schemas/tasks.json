@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/tasks/1.0",
+  "title": "Task record",
+  "description": "A durable unit of work in a run. The task queue is shared by standalone workers and external agents via a lease-based protocol.",
+  "type": "object",
+  "required": [
+    "task_id",
+    "type",
+    "state"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "description": "Task type, e.g. search, screen, retrieve, extract, synthesize, export."
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "leased",
+        "running",
+        "succeeded",
+        "retry_wait",
+        "failed",
+        "skipped"
+      ]
+    },
+    "input_hash": {
+      "type": "string"
+    },
+    "result_hash": {
+      "type": "string"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lease": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Lease for the lease-based external-agent protocol. Expires after worker loss to allow recovery.",
+      "properties": {
+        "owner": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

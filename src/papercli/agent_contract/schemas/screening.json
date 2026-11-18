@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/screening/1.0",
+  "title": "Screening decision",
+  "description": "A title/abstract or full-text screening decision. Decisions include criterion IDs, rationale, evidence basis, reviewer identity, and prompt version.",
+  "type": "object",
+  "required": [
+    "paper_id",
+    "stage",
+    "decision"
+  ],
+  "properties": {
+    "paper_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "title_abstract",
+        "full_text"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "include",
+        "exclude",
+        "uncertain"
+      ]
+    },
+    "criterion_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "evidence_basis": {
+      "type": "string",
+      "enum": [
+        "abstract",
+        "full_text",
+        "metadata",
+        "none"
+      ]
+    },
+    "reviewer": {
+      "type": "string",
+      "description": "Model/agent identity that made the decision."
+    },
+    "prompt_version": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": true
+}

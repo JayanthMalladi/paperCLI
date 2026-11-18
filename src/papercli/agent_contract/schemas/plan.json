@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/plan/1.0",
+  "title": "Research plan / protocol",
+  "description": "Validated research protocol generated from a brief. Carries database-specific queries, identified assumptions/ambiguities, expected coverage, and the saved effective limits.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "plan_id",
+    "question",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "protocol_hash": {
+      "type": "string",
+      "description": "Stable hash of the protocol content; a changed brief/config produces a new revision, never silent mutation."
+    },
+    "question": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "review_type": {
+      "type": "string",
+      "enum": [
+        "narrative",
+        "systematic"
+      ]
+    },
+    "queries": {
+      "type": "array",
+      "description": "Database-specific search queries planned per provider.",
+      "items": {
+        "type": "object",
+        "required": [
+          "provider",
+          "query"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "filters": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ambiguities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expected_coverage": {
+      "type": "string"
+    },
+    "brief_ref": {
+      "type": "object",
+      "description": "Opaque reference to the source brief; not the brief content."
+    },
+    "config_snapshot_ref": {
+      "type": "string",
+      "description": "Reference/path to the saved effective nonsecret config snapshot."
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "wall_minutes",
+        "max_search_queries",
+        "max_discovered_records",
+        "max_full_text_papers",
+        "max_model_calls",
+        "max_input_tokens",
+        "max_output_tokens",
+        "max_estimated_cost_usd"
+      ],
+      "properties": {
+        "wall_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_search_queries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_discovered_records": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_full_text_papers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_estimated_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

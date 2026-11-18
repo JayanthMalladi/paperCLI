@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JayanthMalladi/papercli/schemas/evidence/1.0",
+  "title": "Evidence record",
+  "description": "Minimum evidence record linking a claim to identified source material. Access levels distinguish what was actually read; full-text findings must never be inferred from metadata.",
+  "type": "object",
+  "required": [
+    "evidence_id",
+    "paper_id",
+    "access_level",
+    "finding"
+  ],
+  "properties": {
+    "evidence_id": {
+      "type": "string"
+    },
+    "paper_id": {
+      "type": "string"
+    },
+    "document_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "access_level": {
+      "type": "string",
+      "enum": [
+        "full_text",
+        "partial_full_text",
+        "abstract_only",
+        "metadata_only",
+        "unavailable"
+      ]
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "section": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paragraph": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "supporting_excerpt": {
+      "type": "string",
+      "description": "Short source passage, resolvable to exact stored source text."
+    },
+    "finding": {
+      "type": "string",
+      "description": "Structured interpretation of the passage."
+    },
+    "claim_type": {
+      "type": "string"
+    },
+    "methods": {
+      "type": "object"
+    },
+    "population_or_system": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "extraction_warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}
