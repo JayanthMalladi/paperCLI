@@ -54,10 +54,10 @@ def test_config_show_exits_0(tmp_project):
 
 # ---- NOT_IMPLEMENTED stubs (exit 2) -------------------------------------
 
+#: Phase 1 stubs that still exit 2 with NOT_IMPLEMENTED. Phase 2 wired
+#: search/resolve/fetch into live provider commands, so they no longer
+#: belong here (their offline behavior is covered in the provider tests).
 _STUB_COMMANDS = [
-    ["search", "Q", "--providers", "crossref", "--limit", "5"],
-    ["resolve", "X"],
-    ["fetch", "DOI", "--out", "./papers"],
     ["read", "F", "--pages", "1-3", "--max-chars", "18000"],
     ["ingest", "F", "--run", "R1"],
     ["review", "plan", "--brief", "b.md", "--out", "plan.yaml"],

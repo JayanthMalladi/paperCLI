@@ -60,6 +60,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "network: live provider smoke tests (skipped when offline or when the needed credential is absent)",
+]
 
 [tool.coverage.run]
 source = ["src/papercli"]

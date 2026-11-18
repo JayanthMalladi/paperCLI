@@ -5,12 +5,16 @@ research brief and resource limits, leave the computer, and get back a
 complete output bundle — or a clearly labeled partial one — with every
 substantive claim linked to identified source evidence.
 
-This is **Phase 1 (Foundation)** of the build. The machine contract,
-configuration system, JSON Schemas, provider extension point, storage
-migration framework, preflight doctor, and test/CI scaffolding are in
-place. Live provider work, document parsing, the research pipeline, the
-model adapter, the detached worker, and exporters come in later phases.
-See **What is implemented vs not** below.
+This is **Phase 1 (Foundation) + Phase 2 (Providers)** of the build.
+The machine contract, configuration system, JSON Schemas, provider
+extension point, storage migration framework, preflight doctor, and
+test/CI scaffolding are in place, and the live provider adapters
+(Unpaywall, Crossref, OpenAlex, arXiv, Semantic Scholar enrichment) plus
+the `search` / `resolve` / `fetch` commands now run against the real APIs
+behind a shared guarded HTTP layer (TLS on, URL guard, per-provider
+pacing, bounded retry, retrieval cache). Document parsing (read/ingest),
+the research pipeline, the model adapter, the detached worker, and
+exporters come in later phases. See **What is implemented vs not** below.
 
 ## Install
 
@@ -57,6 +61,9 @@ Implemented in Phase 1:
 | `papers config show --redact` | implemented |
 | `papers doctor --json` | implemented |
 | `papers schema [--list \| --validate]` | implemented |
+| `papers search "Q" --providers crossref,openalex,arxiv,s2 --limit 50` | implemented (Phase 2) |
+| `papers resolve "DOI\|arXiv-id"` | implemented (Phase 2) |
+| `papers fetch "IDENTIFIER" --out ./papers` | implemented (Phase 2, retrieval order) |
 | `papers version`, `papers --help` | implemented (human-readable exceptions) |
 
 The full contract (all commands below exist and are parseable; every
@@ -130,19 +137,37 @@ max_output_tokens 150000 · max_estimated_cost_usd null`. These are example
 ceilings, not promised throughput or cost. A null monetary cap is only
 valid with hard token/call limits set.
 
-## What is implemented vs not (Phase 1, honestly)
+## What is implemented vs not (Phases 1–2, honestly)
 
 **Implemented**
 - `init`, `config show --redact`, `doctor --json`, `schema`, `version`,
   `--help` — all emit one JSON envelope with the spec exit-code table.
+- Live provider adapters (Phase 2): **Unpaywall** (DOI OA lookup; closed
+  records are valid; PDF locations before landing pages), **Crossref**
+  (DOI metadata + bibliographic search, polite pool via mailto, cursor
+  paging), **OpenAlex** (discovery + filters + cursor paging; sends the
+  key when set, records the USD-credit budget concept; a provider failure
+  is never a complete search), **arXiv** (id normalization + Atom metadata
+  + version-preserving PDF URLs, 1-req/3-s single-connection pacing),
+  and **Semantic Scholar** as optional keyless enrichment (429/403/miss →
+  recorded skip, never a run failure).
+- `papers search`, `papers resolve`, `papers fetch` are live: one JSON
+  envelope with records, per-provider provenance (query, date, cursor,
+  count, completeness flag), and dedup; Search/Paper/Document rows are
+  persisted in SQLite. `fetch` runs the spec retrieval order
+  (local cache → Unpaywall locations → repository/publisher full text →
+  record unavailable), byte-validates PDFs/HTML/XML, and returns
+  `access_level` (full_text / html_landing / unavailable; unavailable is
+  exit 4).
 - Full JSON envelope + error shape; `NOT_IMPLEMENTED` stubs for every other
   contract command (each documents its planned phase).
 - Layered config with the documented precedence, `.env` support, and
   secret-reference-only storage. `Config.snapshot()` hook for saving
   effective nonsecret config per run.
 - Nine published JSON Schemas with round-trip validation.
-- Provider extension contract: abstract base + registry (no live network
-  code yet).
+- Provider extension contract: abstract base + registry, now with live
+  adapters (Unpaywall, Crossref, OpenAlex, arXiv, Semantic Scholar), a
+  shared guarded HTTP layer, and the retrieval cache (Phase 2).
 - SQLite migration framework + `migrations/0001.sql` (durable entities).
 - Preflight doctor: config syntax, contact email, provider credentials,
   model-endpoint reachability/capability (report-only when the key is
@@ -151,15 +176,24 @@ valid with hard token/call limits set.
 - pytest suite + CI (clean-venv install, `pytest`, secret-scan).
 
 **Not yet implemented (later phases)**
-- Live provider adapters (Unpaywall, Crossref, OpenAlex, arXiv) and
-  retrieval/search.
-- Document parsing, evidence locations, imports.
+- Document parsing (`read`, `ingest`), evidence locations, imports.
 - Research pipeline: protocol generation, screening, extraction,
   synthesis, citation audit.
 - The tested OpenAI-compatible model adapter and budgets.
 - Detached worker, locks/leases, status, cancellation, resume.
 - Exporters (md/pdf/docx/bib/csl/csv).
 - Portable agent skill.
+
+## Live provider smoke tests
+
+The network smoke tests are marked `@pytest.mark.network` and skip when
+offline. They exercise one Unpaywall DOI lookup, one Crossref works query,
+one OpenAlex works query (with and without a key), one arXiv `id_list`
+fetch, and one keyless Semantic Scholar call that expects a graceful skip.
+
+```
+python -m pytest -m network
+```
 
 ## Development
 
