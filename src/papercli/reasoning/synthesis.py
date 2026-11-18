@@ -205,7 +205,8 @@ def synthesize(store: PaperStore, task_payload: Mapping[str, Any],
                     run_id, claim_text=str(claim.get("text") or ""),
                     location=f"theme::{theme.get('theme')}",
                     evidence_ids=ev_ids, audit_status=audit,
-                    is_synthesis=bool(claim.get("is_synthesis")))
+                    is_synthesis=bool(claim.get("is_synthesis")),
+                    citation_keys=kept)
                 claim_count += 1
                 claim_row = {"claim_id": cid,
                              "text": claim.get("text"),

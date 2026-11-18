@@ -633,17 +633,23 @@ class PaperStore:
         evidence_ids: list[str] | None = None,
         audit_status: str = "uncertain",
         is_synthesis: bool = False,
+        citation_keys: list[str] | None = None,
     ) -> str:
-        """Persist one Claim-ledger row (spec section 10)."""
+        """Persist one Claim-ledger row (spec section 10).
+
+        ``citation_keys`` are the registry keys the claim cited; the
+        citations audit validates them against the bibliography registry
+        (fabricated keys are flagged, spec section 10)."""
         cid = self.new_id("claim")
         with self._conn:
             self._conn.execute(
                 "INSERT INTO claims (id, run_id, draft_location, claim_text, "
-                "evidence_ids_json, audit_status, is_synthesis) VALUES "
-                "(?,?,?,?,?,?,?)",
+                "evidence_ids_json, audit_status, is_synthesis, "
+                "citation_keys_json) VALUES (?,?,?,?,?,?,?,?)",
                 (cid, run_id, location, claim_text,
                  json.dumps(list(evidence_ids or []), ensure_ascii=False),
-                 audit_status, 1 if is_synthesis else 0),
+                 audit_status, 1 if is_synthesis else 0,
+                 json.dumps(list(citation_keys or []), ensure_ascii=False)),
             )
         return cid
 
@@ -655,7 +661,11 @@ class PaperStore:
         for r in rows:
             d = dict(r)
             d["evidence_ids"] = json.loads(d.get("evidence_ids_json") or "[]")
+            d["citation_keys"] = json.loads(d.get("citation_keys_json") or "[]")
             d["is_synthesis"] = bool(d.get("is_synthesis"))
+            # 0001 stores the draft location in draft_location; 0006 added
+            # a nullable location column -- surface one resolved key.
+            d["location"] = d.get("location") or d.get("draft_location")
             out.append(d)
         return out
 

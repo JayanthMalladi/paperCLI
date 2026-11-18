@@ -72,7 +72,9 @@ _NOT_IMPL: dict[str, dict] = {
                       "pos": ["run_id"], "opt": []},
     "review export": {"phase": "Phase 7", "desc": "Export the output bundle for a completed run",
                       "pos": ["run_id"], "opt": ["--formats"]},
-    "citations audit": {"phase": "Phase 7", "desc": "Run citation and claim-support audit",
+    # "citations audit" is live since Phase 5 (excluded via _implemented_cmds);
+    # the entry is kept only so help text stays available if re-versioned.
+    "citations audit": {"phase": "Phase 5 (live)", "desc": "Run citation and claim-support audit",
                         "pos": [], "opt": ["--run"]},
     "skill export": {"phase": "Phase 7", "desc": "Export the portable agent skill folder",
                      "pos": [], "opt": ["--out"]},
@@ -735,6 +737,22 @@ def _cmd_evidence_list(args: argparse.Namespace) -> None:
     }))
 
 
+def _cmd_citations_audit(args: argparse.Namespace) -> None:
+    """``papers citations audit --run RUN_ID``: the run's claim-audit
+    results + reference-identity checks + coverage/limits disclosure
+    (spec section 10), as one JSON envelope."""
+    from papercli.citations.audit import audit_citations
+    from papercli.storage.db import PaperStore
+
+    run_id = args.run
+    with PaperStore() as store:
+        if store.run_row(run_id) is None:
+            raise ConfigError(f"run not found: {run_id}",
+                              details={"run_id": run_id})
+        data = audit_citations(store, run_id)
+    emit(ok(data=data))
+
+
 # ---------------------------------------------------------------------------
 # Argparse builder
 # ---------------------------------------------------------------------------
@@ -845,7 +863,7 @@ def build_parser() -> argparse.ArgumentParser:
         return _group_map[group_name]
 
     _implemented_cmds = {"review plan", "task next", "task submit",
-                         "evidence list"}
+                         "evidence list", "citations audit"}
 
     review_sub = _ensure_group("review", "Group: review (research pipeline)")
     task_sub = _ensure_group("task", "Group: task (lease-based task protocol)")
@@ -883,6 +901,12 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="List the run's evidence records.")
     p_elist.add_argument("--run", required=True, help="Run id.")
     p_elist.set_defaults(func=_cmd_evidence_list)
+
+    cite_sub = _ensure_group("citations", "Group: citations (audit)")
+    p_caudit = cite_sub.add_parser(
+        "audit", help="Run citation + claim-support audit (JSON envelope).")
+    p_caudit.add_argument("--run", required=True, help="Run id.")
+    p_caudit.set_defaults(func=_cmd_citations_audit)
 
     # All remaining NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
     for cmd, spec in _NOT_IMPL.items():

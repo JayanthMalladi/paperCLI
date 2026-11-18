@@ -40,6 +40,13 @@
     "is_synthesis": {
       "type": "boolean",
       "description": "True when the claim is cross-paper synthesis or author interpretation, not a single source."
+    },
+    "citation_keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Bibliography-registry citation keys the claim cites; every key must resolve in the registry (the model cannot fabricate entries)."
     }
   },
   "additionalProperties": true

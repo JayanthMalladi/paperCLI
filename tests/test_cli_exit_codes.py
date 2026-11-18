@@ -62,6 +62,8 @@ _STUB_COMMANDS = [
     # Phase 4 implemented "review plan", "task next", "task submit", and
     # "evidence list" (wired into live commands -- their offline behavior is
     # covered in test_phase4_research.py), so they no longer belong here.
+    # Phase 5 implemented "citations audit" (live; covered in
+    # test_phase5_citations.py), so it no longer belongs here either.
     # The remaining contract commands are still documented NOT_IMPLEMENTED.
     ["review", "run", "--plan", "p.yaml", "--detach"],
     ["review", "status", "RUN_ID"],
@@ -69,7 +71,6 @@ _STUB_COMMANDS = [
     ["review", "resume", "RUN_ID", "--detach"],
     ["review", "cancel", "RUN_ID"],
     ["review", "export", "RUN_ID", "--formats", "md,bib"],
-    ["citations", "audit", "--run", "RUN_ID"],
     ["skill", "export", "--out", "./papercli-skill"],
 ]
 
