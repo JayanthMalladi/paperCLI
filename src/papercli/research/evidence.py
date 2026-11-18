@@ -7,9 +7,12 @@ document + stable (page, section, paragraph) locations. The model-driven
 only:
 
 * location: the numbered page / section / paragraph of the stored index;
-* supporting_excerpt: a byte-exact slice of the stored source text
+* supporting_excerpt: a stripped slice of the stored source text
   (resolves through the Phase-3 ``document_text`` index -- acceptance
-  "Extraction");
+  "Extraction"); the exact slice offsets are stored as
+  ``location["excerpt_span"] = [start, end)`` so a verifier can slice
+  the stored row text exactly (D-P4-5 strictness, display semantics
+  unchanged);
 * claim_type candidate: section heuristics map to
   ``reported_result`` / ``method`` / ``limitation``;
 * methods / population_or_system: null where unknown (never invented);
@@ -201,8 +204,12 @@ def extract_evidence_for_document(
         pass  # grade disclosure above covers the scanned case
 
     # One evidence record per non-empty stored paragraph, in stable index
-    # order. The excerpt is a byte-exact slice of the row text (the
+    # order. The excerpt is a contiguous slice of the row text (the
     # Phase-3 index guarantees it resolves against stored source text).
+    # The display field is the stripped (and, past the budget, truncated)
+    # text; the exact slice offsets into the stored document_text are
+    # recorded as location["excerpt_span"] = [start, end) so a verifier
+    # can slice the stored row text exactly (D-P4-5).
     evidence_ids: list[str] = []
     count = 0
     for row in rows:
@@ -218,13 +225,21 @@ def extract_evidence_for_document(
             continue
         excerpt = stripped[:MAX_EXCERPT_CHARS]
         truncated = len(stripped) > MAX_EXCERPT_CHARS
+        # Offsets of the display excerpt's source slice in the stored row
+        # text: the first non-whitespace char of the stripped paragraph,
+        # up to either its full length or the truncation budget.
+        start = len(text) - len(text.lstrip())
+        span_end = start + (MAX_EXCERPT_CHARS if truncated
+                            else len(stripped))
         location = {"page": row["page"], "section": row["section"],
-                    "paragraph": row["paragraph"]}
+                    "paragraph": row["paragraph"],
+                    "excerpt_span": [start, span_end]}
         rec_warnings = list(warnings_doc)
         if truncated:
             rec_warnings.append(
                 f"excerpt truncated to {MAX_EXCERPT_CHARS} chars of "
-                f"{len(stripped)}")
+                f"{len(stripped)}; excerpt_span=[{start}, {span_end}) "
+                "slices the stored document_text exactly")
         ev_id = store.record_evidence(
             paper_id,
             document_id=document_id,

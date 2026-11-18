@@ -101,13 +101,15 @@ def load_brief(path: Path | str) -> dict[str, Any]:
 
 
 def _brief_field_from_error(e: str) -> str:
-    """The brief field named by a validator error message.
+    """The brief field named by a validator error message string.
 
-    Two formats: the structural check's
-    ``missing required key: 'question'`` and jsonschema's
-    ``[path]: message`` (a missing top-level key has the empty path
-    and the key name lives in the message: ``'question' is a required
-    property``). Returns a dotted field name like ``limits.max_model_calls``.
+    The FALLBACK path (D-P4-4): it parses the string forms -- the
+    structural check's ``missing required key: '<field>'`` and
+    jsonschema's ``[path]: message`` (a missing top-level key has the
+    empty path and the key name in the message). The preferred path is
+    :func:`_brief_fields_from_validation`, which reads the validator's
+    structured ``err.path`` / ``err.schema_path`` directly. Returns a
+    dotted field name like ``limits.max_model_calls``.
     """
     m2 = re.match(r"^missing required key: '?\w+'?", e)
     if m2:
@@ -124,11 +126,74 @@ def _brief_field_from_error(e: str) -> str:
         return req.group(1)
     return ".".join(path_parts) if path_parts else "brief"
 
+
+
+def _brief_fields_from_validation(brief: Mapping[str, Any]) -> list[str]:
+    """Dotted brief field names for every schema error (D-P4-4).
+
+    Walks ``Draft202012Validator(schema).iter_errors(doc)`` and builds
+    the dotted field name from the validator's structured paths --
+    ``err.path`` for the instance location -- instead of regex-parsing
+    message strings. A missing required key errors at the object's
+    location (empty ``err.path`` at the top level, ``['limits']`` for
+    a missing nested key) with jsonschema's stable message form
+    ``'<key>' is a required property``: the key name is read from the
+    schema's own ``required`` list (``err.schema``), never parsed from
+    free text. Any other error (a wrong type at ``limits.wall_minutes``
+    etc.) carries its dotted field in ``err.path`` directly. Returns
+    ``[]`` when the brief is schema-valid.
+    """
+    from jsonschema.validators import Draft202012Validator
+
+    from papercli.agent_contract.schemas import load_schema
+
+    schema = load_schema("brief")
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    fields: list[str] = []
+    for err in validator.iter_errors(dict(brief)):
+        if err.validator == "required":
+            # jsonschema reports a required error AT THE OBJECT'S
+            # location: err.path is the containing object's dotted path
+            # ([] at the top level, ['limits'] for a nested object) and
+            # err.schema is that object's schema, whose "required" list
+            # names the missing key -- the key is read from the schema,
+            # not parsed out of the message string.
+            required = (err.schema.get("required", [])
+                        if isinstance(err.schema, dict) else [])
+            containing: dict[str, Any] = dict(brief)
+            for part in err.path:
+                nxt = containing.get(part)
+                containing = nxt if isinstance(nxt, dict) else {}
+            missing = next((k for k in required if k not in containing), None)
+            parts = [str(x) for x in err.path]
+            if missing is not None:
+                parts.append(str(missing))
+        else:
+            # Any other error (wrong type, enum, minItems, ...) carries
+            # its dotted field location directly in err.path.
+            parts = [str(x) for x in err.path]
+        field = ".".join(str(x) for x in parts if str(x) != "") or "brief"
+        if field not in fields:
+            fields.append(field)
+    return fields
+
 def validate_brief(brief: Mapping[str, Any]) -> None:
     """Validate against the Phase-1 brief schema + spec section 7 rules.
 
     Raises :class:`BriefError` naming the first missing/invalid field.
+    The field name is read from the validator's structured error paths
+    (``err.path`` / ``err.schema_path`` via ``iter_errors``), not from
+    regex-parsing error-message strings (D-P4-4 hardening).
     """
+    try:
+        fields = _brief_fields_from_validation(brief)
+    except ModuleNotFoundError:
+        fields = []  # jsonschema optional-dep absent: use the string check
+    if fields:
+        raise BriefError(fields[0], f"brief field {fields[0]!r} failed "
+                                     f"schema validation") from None
+    # Fallback: string-form errors (also the no-jsonschema path).
     errors = validate(dict(brief), "brief", full=True)
     if errors:
         field = _brief_field_from_error(errors[0])

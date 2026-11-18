@@ -764,6 +764,24 @@ def _fakes(failing_openalex: bool = False):
     return factory
 
 
+class _CapturingOpenAlex:
+    """Records the filter string(s) the branch builds, returns items."""
+
+    def __init__(self):
+        self.filters = None
+
+    def search_works(self, query, config, env, *, cache=None, per_page=25,
+                     filters=None, cursor=None, save_cursor=None,
+                     use_search=True):
+        self.filters = list(filters or [])
+        return {"items": [
+            {"id": "WNEW", "doi": "https://doi.org/10.9/CITING",
+             "display_name": "Citing work", "publication_date": "2020-05-01",
+             "authorships": []}],
+            "completeness": "partial", "total_results": 1,
+            "next_cursor": None, "error": None}
+
+
 def test_expansion_provenance_chains_saved(tmp_path):
     from papercli.research.expansion import expand_search
 
@@ -938,3 +956,293 @@ def test_cli_evidence_list_envelope(tmp_project, tmp_path):
                 assert rec["document_id"] == rep["document_id"]
     finally:
         os.chdir(REPO)
+
+
+# ---------------------------------------------------------------------------
+# D-P4 defect fixes (judge re-run cases)
+# ---------------------------------------------------------------------------
+
+def test_expansion_openalex_filter_is_documented_and_forward(tmp_path):
+    """D-P4-1: the OpenAlex expansion filter must be a field that actually
+    exists in the live OpenAlex API and match the declared direction.
+
+    Fixture-based (no network): the shipped filter string is asserted to be
+    in the documented valid set {cited_by, cites, referenced_works,
+    referenced_works_count, has_references}, to match the declared forward
+    direction, and the branch is verified to hand exactly that filter to
+    the provider -- so a non-existent filter (like the old ``citations:``)
+    is caught without a live 400.
+    """
+    from papercli.research.expansion import (
+        _openalex_branch, expand_search,
+        OPENALEX_EXPANSION_METHOD, OPENALEX_VALID_CITATION_FILTERS,
+    )
+
+    # The documented valid set -- exactly what the judge's live probes
+    # confirmed exist; every other field name 400s ('is not a valid
+    # field'). Live-verified directions (keyless, 2026-11-18):
+    # * cites:<seed> / referenced_works:<seed> = FORWARD (count tracks
+    #   the seed's cited_by_count: the works that cite the seed);
+    # * cited_by:<seed> = BACKWARD (count tracks the seed's
+    #   referenced_works_count: the works the seed cites) --
+    #   counter-intuitively named;
+    # * referenced_works_count / has_references = scalars/booleans.
+    assert OPENALEX_VALID_CITATION_FILTERS == frozenset({
+        "cited_by", "cites", "referenced_works",
+        "referenced_works_count", "has_references"})
+    # The declared direction must be one of the documented fields...
+    assert OPENALEX_EXPANSION_METHOD in OPENALEX_VALID_CITATION_FILTERS
+    # ...and be the FORWARD one (expand to citing works).
+    assert OPENALEX_EXPANSION_METHOD == "cites"
+
+    # The branch hands the provider exactly the documented filter.
+    cap = _CapturingOpenAlex()
+    _openalex_branch(cap, {"openalex": "W42"}, None, {}, None, 25)
+    assert cap.filters == [f"{OPENALEX_EXPANSION_METHOD}:W42"]
+
+    # The orchestration default uses the declared direction too.
+    store = _store(tmp_path)
+    rid = store.create_run(state="planned")
+    store.upsert_paper(rid, {"openalex": "W42"}, title="Seed")
+    accepted = [dict(r) for r in store.papers_for_run(rid)]
+    res = expand_search(store, rid, {"limits": {"max_discovered_records": 10}},
+                       accepted, config=None, env=None, cache=None,
+                       adapter_factory=lambda n: (cap
+                                                  if n == "openalex"
+                                                  else _FakeS2()))
+    branch = [b for b in res["branches"] if b["provider"] == "openalex"][0]
+    assert branch["method"] == OPENALEX_EXPANSION_METHOD
+    assert branch["query"] == f"{OPENALEX_EXPANSION_METHOD}:W42"
+    # An invented filter name must fail loudly, never be sent.
+    try:
+        _openalex_branch(cap, {"openalex": "W42"}, None, {}, None, 25,
+                         "citations")
+        raise AssertionError("non-existent filter 'citations' must raise")
+    except ValueError:
+        pass
+    # Guard validates against the existing-field set, not direction:
+    # the backward-named-but-valid ``cited_by`` field passes the guard
+    # (it is a real OpenAlex filter) while the default stays forward.
+    cap2 = _CapturingOpenAlex()
+    _openalex_branch(cap2, {"openalex": "W42"}, None, {}, None, 25,
+                     "cited_by")
+    assert cap2.filters == ["cited_by:W42"]
+    store.close()
+
+
+def test_task_resubmit_identical_rejected_payload_is_clean(tmp_project, tmp_path):
+    """D-P4-2 + D-P4-3: re-submitting an IDENTICAL rejected payload returns
+    the same well-formed reject (exit 2), never an IntegrityError crash
+    (exit 1), and the rejected audit row survives a later acceptance.
+    """
+    from papercli.jobs.tasks import TaskQueue, submit
+    from papercli.storage.db import PaperStore
+    import os
+    os.chdir(tmp_project)
+    try:
+        with PaperStore() as store:
+            rid = store.create_run(state="planned")
+            q = TaskQueue(store)
+            t1 = q.enqueue(rid, "search", "h1",
+                           payload={"provider": "openalex", "query": "q"})
+            q.claim(rid, "agent-a")
+
+            bad = {"input_hash": "WRONG", "x": 1}
+
+            # First bad submit -> clean reject, audit row recorded.
+            r1 = submit(q, rid, t1.task_id, "agent-a", bad,
+                       source_input_hash="h1")
+            assert r1["status"] == "rejected_source"
+            # Identical second bad submit -> the SAME clean reject (the old
+            # all-status UNIQUE index + blind INSERT made this an
+            # unhandled IntegrityError -> CLI exit 1 INTERNAL_ERROR).
+            r2 = submit(q, rid, t1.task_id, "agent-a", bad,
+                       source_input_hash="h1")
+            assert r2["status"] == "rejected_source"
+            n_rej = store._conn.execute(
+                "SELECT COUNT(*) FROM task_submissions WHERE task_id=? "
+                "AND status='rejected_source'", (t1.task_id,)).fetchone()[0]
+            assert n_rej >= 1, "the rejected audit row must be present"
+
+            # A later ACCEPTANCE of the correct payload must NOT delete the
+            # rejected audit row (D-P4-2: audit trail is preserved).
+            good = {"input_hash": "h1", "records": []}
+            r3 = submit(q, rid, t1.task_id, "agent-a", good,
+                        source_input_hash="h1")
+            assert r3["status"] == "accepted"
+            n_rej_after = store._conn.execute(
+                "SELECT COUNT(*) FROM task_submissions WHERE task_id=? "
+                "AND status='rejected_source'", (t1.task_id,)).fetchone()[0]
+            assert n_rej_after == n_rej, (
+                "the accepted path must not delete rejected audit rows")
+            # Duplicate accepted resubmit still returns the prior result.
+            r4 = submit(q, rid, t1.task_id, "agent-a", good,
+                        source_input_hash="h1")
+            assert r4["status"] == "duplicate"
+            assert r4["prior_result"] == good
+    finally:
+        os.chdir(REPO)
+
+
+def test_migration_0005_scopes_payload_index_to_accepted(tmp_path):
+    """D-P4-2: migration 0005 replaces the 0002 all-status UNIQUE index with
+    a PARTIAL unique index on accepted rows only (rejected audit rows may
+    coexist). 0001-0004 are never edited -- 0005 supersedes instead.
+    """
+    from papercli.storage.db import PaperStore
+    from papercli.storage.migrations import apply_migrations, MIGRATIONS_DIR
+
+    assert (MIGRATIONS_DIR / "0005.sql").exists(),         "0005 must ship as a new migration (never rewrite 0002)"
+    applied_names = [m.name for m in apply_migrations(tmp_path / "m5.db")]
+    store = PaperStore(tmp_path / "m5.db")
+    conn = store._conn
+    idx = {r[0]: r[1] for r in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='index' "
+        "AND tbl_name='task_submissions'")}
+    # The all-status index is gone; the partial accepted-only index exists.
+    assert "idx_task_submissions_payload" not in idx
+    assert "idx_task_submissions_accepted_payload" in idx
+    assert "WHERE status = 'accepted'" in idx["idx_task_submissions_accepted_payload"]
+    # Fresh databases apply 0001..0005 in order.
+    assert "0005.sql" in applied_names
+    assert applied_names.index("0004.sql") < applied_names.index("0005.sql")
+
+    # Functional: two rejected rows for the same payload may coexist, while
+    # a second ACCEPTED row for the same payload still collides (the partial
+    # index enforces accepted-row uniqueness).
+    store.close()
+    db2 = tmp_path / "m5f.db"
+    from papercli.jobs.tasks import TaskQueue, submit
+    store2 = PaperStore(db2)
+    rid = store2.create_run(state="planned")
+    q = TaskQueue(store2)
+    t1 = q.enqueue(rid, "search", "h1", payload={"q": 1})
+    q.claim(rid, "w")
+    c = store2._conn
+    c.execute("INSERT INTO task_submissions (id, task_id, run_id, worker, "
+              "payload_hash, status, rejection_reason) VALUES "
+              "('sub-a', ?, ?, 'w', 'ph', 'rejected_source', 'r1')",
+              (t1.task_id, rid))
+    c.execute("INSERT INTO task_submissions (id, task_id, run_id, worker, "
+              "payload_hash, status, rejection_reason) VALUES "
+              "('sub-b', ?, ?, 'w', 'ph', 'rejected_source', 'r1')",
+              (t1.task_id, rid))
+    n = c.execute("SELECT COUNT(*) FROM task_submissions WHERE "
+                  "payload_hash='ph' AND status='rejected_source'").fetchone()[0]
+    assert n == 2, "rejected audit rows for one payload may coexist"
+    # A second accepted row with the same payload still violates uniqueness.
+    import sqlite3
+    c.execute("INSERT INTO task_submissions (id, task_id, run_id, worker, "
+              "payload_hash, status, result_hash, result_json) VALUES "
+              "('sub-c', ?, ?, 'w', 'ph', 'accepted', 'ph', '{}')",
+              (t1.task_id, rid))
+    try:
+        c.execute("INSERT INTO task_submissions (id, task_id, run_id, worker, "
+                  "payload_hash, status, result_hash, result_json) VALUES "
+                  "('sub-d', ?, ?, 'w', 'ph', 'accepted', 'ph', '{}')",
+                  (t1.task_id, rid))
+        raise AssertionError("a duplicate accepted row must be rejected")
+    except sqlite3.IntegrityError:
+        pass
+    store2.close()
+
+
+def test_brief_field_names_use_structured_error_paths(tmp_path):
+    """D-P4-4: the exit-2 field name comes from the validator's structured
+    error paths (err.path / err.schema_path via iter_errors), not from
+    regex-parsing jsonschema message strings. All 14 omission cases keep
+    naming the correct dotted field; a wrong-type nested error names the
+    nested field; a valid brief yields no field.
+    """
+    from papercli.research.plan import _brief_fields_from_validation
+
+    base = {
+        "schema_version": "1.0",
+        "question": "q",
+        "purpose": "p",
+        "scope": "s",
+        "outputs": ["md"],
+        "limits": {
+            "wall_minutes": 60, "max_search_queries": 5,
+            "max_discovered_records": 10, "max_full_text_papers": 3,
+            "max_model_calls": 10, "max_input_tokens": 100,
+            "max_output_tokens": 100, "max_estimated_cost_usd": None,
+        },
+    }
+    import copy
+
+    # Valid brief -> no schema field.
+    assert _brief_fields_from_validation(base) == []
+
+    # Every top-level required omission names that field.
+    for missing in ("question", "purpose", "scope", "outputs",
+                    "limits", "schema_version"):
+        d = copy.deepcopy(base)
+        d.pop(missing)
+        assert missing in _brief_fields_from_validation(d), missing
+
+    # Every nested limits.* omission names the dotted field.
+    for missing in ("wall_minutes", "max_search_queries",
+                    "max_discovered_records", "max_full_text_papers",
+                    "max_model_calls", "max_input_tokens",
+                    "max_output_tokens", "max_estimated_cost_usd"):
+        d = copy.deepcopy(base)
+        d["limits"].pop(missing)
+        assert f"limits.{missing}" in _brief_fields_from_validation(d), missing
+
+    # A wrong-type nested value names the dotted field via err.path.
+    d = copy.deepcopy(base)
+    d["limits"]["wall_minutes"] = "sixty"
+    assert "limits.wall_minutes" in _brief_fields_from_validation(d)
+
+    # Two fields missing -> both named, in deterministic order.
+    d = copy.deepcopy(base)
+    d.pop("outputs")
+    d["limits"].pop("max_search_queries")
+    assert set(_brief_fields_from_validation(d)) == {
+        "outputs", "limits.max_search_queries"}
+
+
+def test_evidence_records_excerpt_span_into_stored_text(tmp_path):
+    """D-P4-5: each evidence record stores the exact slice offsets
+    (location.excerpt_span = [start, end)) into the stored document_text,
+    so a verifier can slice the stored text exactly; the display excerpt
+    (stripped + truncated) is unchanged, and truncation is disclosed in
+    extraction_warnings with the span.
+    """
+    from papercli.research.evidence import (
+        extract_evidence_for_document, MAX_EXCERPT_CHARS)
+    from papercli.storage.db import PaperStore
+
+    store = PaperStore(tmp_path / "ev.db")
+    rid = store.create_run(state="planned")
+    pid = store.upsert_paper(rid, {"doi": "10.6/ev"})
+    doc = store.record_document(
+        pid, access_status="retrieved_full_text", access_level="full_text",
+        parse_quality="good")
+    long_text = "   " + "word " * 400  # leading whitespace + >600 chars
+    store.store_document_text(doc, [
+        {"page": 1, "section": "Results", "paragraph": 0,
+         "text": "short lead"},
+        {"page": 1, "section": "Results", "paragraph": 1,
+         "text": long_text}])
+    extract_evidence_for_document(store, run_id=rid, paper_id=pid,
+                                 document_id=doc)
+    rows = {r["paragraph"]: r["text"] for r in store.document_text(doc)}
+    for e in store.evidence_for_run(rid):
+        loc = e["location"]
+        assert "excerpt_span" in loc, "the slice offsets must be stored"
+        start, end = loc["excerpt_span"]
+        stored = rows[loc["paragraph"]]
+        sliced = stored[start:end]
+        # The display field is exactly the slice of the stored text.
+        assert sliced == e["supporting_excerpt"],             "excerpt_span must slice the stored document_text exactly"
+        assert start >= 0 and end > start
+        if len(sliced) == MAX_EXCERPT_CHARS:
+            # Truncation was disclosed and carries the span.
+            assert any("truncated" in w and "excerpt_span" in w
+                       for w in e["extraction_warnings"])
+    # The long paragraph must have hit the budget and been disclosed.
+    assert any(len(e["supporting_excerpt"]) == MAX_EXCERPT_CHARS
+               for e in store.evidence_for_run(rid))
+    store.close()
