@@ -1,0 +1,31 @@
+# Sample research brief (spec section 7). Budget values are the
+# documented example ceilings, not promised throughput.
+schema_version: '1.0'
+question: 'Does structured aerobic exercise training improve cognition in community-dwelling adults aged 60 and older?'
+purpose: 'Thesis background and research-gap identification'
+review_type: systematic
+scope: 'Peer-reviewed reports and preprints of interventional exercise studies, 2015 onward, English'
+date_range: {from: '2015', to: '2026'}
+languages: [en]
+include_preprints: true
+seed_identifiers: []
+inclusion_criteria:
+  - 'interventional exercise training study with adults aged 60 or older'
+  - 'measured cognitive outcomes'
+exclusion_criteria:
+  - 'animal studies without a human arm'
+  - 'editorial or commentary without original data'
+themes_to_investigate:
+  - 'aerobic exercise'
+  - 'cognitive training'
+outputs: [md, csv]
+citation_style: ieee
+limits:
+  wall_minutes: 240
+  max_search_queries: 16
+  max_discovered_records: 400
+  max_full_text_papers: 40
+  max_model_calls: 200
+  max_input_tokens: 500000
+  max_output_tokens: 100000
+  max_estimated_cost_usd: null

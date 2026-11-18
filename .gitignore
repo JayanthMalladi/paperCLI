@@ -17,3 +17,8 @@ build/
 out.txt
 err.txt
 nul
+
+# Phase 4: judge working dir + scratch logs (never commit; verdicts ARE committed)
+research/review/scratch/
+*.log
+_debug*
