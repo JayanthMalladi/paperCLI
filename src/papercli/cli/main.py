@@ -31,8 +31,10 @@ from papercli import __version__
 from papercli.cli.envelope import emit, error, ok
 from papercli.cli.errors import (
     CliError,
+    ConfigError,
     EXIT_CODES,
     InternalError,
+    NetworkError,
     NotImplemented as NotImplementedErr,
 )
 from papercli.agent_contract import schema_names, validate_envelope
@@ -56,12 +58,9 @@ __all__ = ["build_parser", "main", "cli_entry"]
 # so every contract command parses and emits the NOT_IMPLEMENTED envelope
 # (exit 2) instead of a usage error.
 _NOT_IMPL: dict[str, dict] = {
-    "search": {"phase": "Phase 2", "desc": "Live provider search (Unpaywall, Crossref, OpenAlex, arXiv)",
-               "pos": ["query"], "opt": ["--providers", "--limit"]},
-    "resolve": {"phase": "Phase 2", "desc": "DOI / arXiv identifier resolution",
-                "pos": ["identifier"], "opt": []},
-    "fetch": {"phase": "Phase 3", "desc": "Full-text retrieval and local cache",
-              "pos": ["identifier"], "opt": ["--out"]},
+
+
+
     "read": {"phase": "Phase 3", "desc": "Page/section extraction from a document",
              "pos": ["file"], "opt": ["--pages", "--max-chars"]},
     "ingest": {"phase": "Phase 3", "desc": "Import a local document into a run",
@@ -277,6 +276,123 @@ def _cmd_version(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Live provider commands (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _load_live_context():
+    """Config + env + cache + store for the live provider commands."""
+    from papercli.config.loader import Config
+    from papercli.providers.cache import RetrievalCache
+
+    cfg = Config.load(cli_overrides={}, cwd=Path.cwd())
+    env = dict(cfg.env)
+    import os
+    for name in ("PAPERS_EMAIL", "OPENALEX_API_KEY", "SEMANTIC_SCHOLAR_API_KEY"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
+    cache_dir = Path.cwd() / ".papercli" / "storage" / "cache"
+    cache = RetrievalCache(cache_dir)
+    return cfg, env, cache
+
+
+def _cmd_search(args: argparse.Namespace) -> None:
+    from papercli.storage.db import PaperStore
+
+    providers = [p for p in (getattr(args, "providers", None) or "crossref,openalex,arxiv,s2").split(",") if p.strip()]
+    limit = int(getattr(args, "limit", 50) or 50)
+    cfg, env, cache = _load_live_context()
+
+    with PaperStore() as store:
+        run_id = store.create_run()
+        from papercli.providers.retrieval import SearchService
+        service = SearchService(cfg, env, cache=cache, store=store)
+        try:
+            result = service.search(args.query, providers, limit=limit)
+        except ValueError as e:
+            raise ConfigError(str(e), details={"providers": providers}) from e
+        except Exception as e:  # noqa: BLE001
+            raise NetworkError(f"provider search failed: {e}") from e
+        service.persist(result, run_id)
+        # A search where every provider failed is still an ok envelope: the
+        # data says so via completeness/errors (spec: provider failures are
+        # data, not process failures, for the search command surface).
+        envelope = ok(
+            data={
+                "query": result["query"],
+                "records": result["records"],
+                "record_count": result["record_count"],
+                "deduplicated_from": result["deduplicated_from"],
+                "completeness": result["completeness"],
+                "providers": result["providers"],
+                "errors": result["errors"],
+                "run_id": run_id,
+            },
+            warnings=result["errors"],
+        )
+    emit(envelope)
+
+
+def _cmd_resolve(args: argparse.Namespace) -> None:
+    from papercli.storage.db import PaperStore
+
+    cfg, env, cache = _load_live_context()
+    with PaperStore() as store:
+        run_id = store.create_run()
+        from papercli.providers.retrieval import resolve_identifier
+        result = resolve_identifier(args.identifier, cfg, env,
+                                    cache=cache, store=store, run_id=run_id)
+    envelope = ok(
+        data={
+            "input": result["input"],
+            "identifier": result["identifier"],
+            "canonical": result["canonical"],
+            "unpaywall": {k: v for k, v in (result.get("unpaywall") or {}).items()
+                          if k != "raw"} if isinstance(result.get("unpaywall"), dict) else result.get("unpaywall"),
+            "crossref": {k: v for k, v in (result.get("crossref") or {}).items()
+                         if k != "record"} if isinstance(result.get("crossref"), dict) else result.get("crossref"),
+            "arxiv": result.get("arxiv"),
+            "openalex": result.get("openalex"),
+            "warnings": result["warnings"],
+            "fetched_at": result["fetched_at"],
+            "run_id": run_id,
+        },
+        warnings=result["warnings"],
+    )
+    emit(envelope)
+
+
+def _cmd_fetch(args: argparse.Namespace) -> None:
+    from papercli.storage.db import PaperStore
+
+    cfg, env, cache = _load_live_context()
+    out_dir = Path(getattr(args, "out", None) or cfg.get("retrieval.out_dir", ".papercli/papers"))
+    with PaperStore() as store:
+        run_id = store.create_run()
+        from papercli.providers.retrieval import AccessLevel, fetch_document
+        result = fetch_document(args.identifier, cfg, env, out_dir=out_dir,
+                                cache=cache, store=store, run_id=run_id)
+    status = result["access_level"]
+    envelope = ok(
+        data={
+            "input": result["input"],
+            "identifier": result["identifier"],
+            "access_level": status,
+            "document": result.get("document"),
+            "retrieval_order": result.get("retrieval_order"),
+            "candidates": result.get("candidates", []),
+            "warnings": result["warnings"],
+            "fetched_at": result["fetched_at"],
+            "run_id": run_id,
+        },
+        warnings=result["warnings"],
+    )
+    emit(envelope)
+    # Spec: "retrieval unavailable / no matching result" is exit 4, not 0.
+    if status == AccessLevel.UNAVAILABLE:
+        sys.exit(4)
+
+
+# ---------------------------------------------------------------------------
 # Argparse builder
 # ---------------------------------------------------------------------------
 
@@ -327,7 +443,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_ver = sub.add_parser("version", help="Print version (human-readable exception).")
     p_ver.set_defaults(func=_cmd_version)
 
-    # All NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
+    # Live provider commands (Phase 2).
+    p_search = sub.add_parser(
+        "search",
+        help="Live provider search: crossref,openalex,arxiv,s2 -> one JSON envelope.",
+    )
+    p_search.add_argument("query", help="Free-text search query.")
+    p_search.add_argument("--providers", default="crossref,openalex,arxiv,s2",
+                          help="Comma-separated providers (default: crossref,openalex,arxiv,s2).")
+    p_search.add_argument("--limit", default=50, type=str,
+                          help="Max results per provider (default: 50).")
+    p_search.set_defaults(func=_cmd_search)
+
+    p_resolve = sub.add_parser(
+        "resolve",
+        help="Resolve a DOI or arXiv identifier to normalized metadata + OA locations.",
+    )
+    p_resolve.add_argument("identifier", help="DOI (10.x/...) or arXiv id (1605.0000, cond-mat/0207270).")
+    p_resolve.set_defaults(func=_cmd_resolve)
+
+    p_fetch = sub.add_parser(
+        "fetch",
+        help="Run the retrieval order: download, validate, and cache a document.",
+    )
+    p_fetch.add_argument("identifier", help="DOI or arXiv identifier.")
+    p_fetch.add_argument("--out", default=None,
+                         help="Output dir for validated documents (default: retrieval.out_dir).")
+    p_fetch.set_defaults(func=_cmd_fetch)
+
+    # All remaining NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
     for cmd, spec in _NOT_IMPL.items():
         parts = cmd.split()
         if len(parts) == 1:

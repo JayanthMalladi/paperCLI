@@ -40,6 +40,22 @@ api_key_env = "OPENALEX_API_KEY"
 [providers.arxiv]
 enabled = true
 
+[providers.semantic_scholar]
+# Optional enrichment only; 429/403/miss is a recorded skip, never a failure.
+enabled = true
+key_env = "SEMANTIC_SCHOLAR_API_KEY"
+
+[network]
+# Explicit local-dev opt-out for the URL guard (spec section 16): allow
+# loopback/private redirect targets. Keep false unless debugging locally.
+allow_local = false
+
+[retrieval]
+# Where validated full text is written (retrieval order, spec section 8).
+out_dir = ".papercli/papers"
+max_document_mb = 50
+min_document_bytes = 2048
+
 [model]
 # One tested OpenAI-compatible chat-completions adapter. The endpoint is
 # visible here so it is always clear which reasoning service is selected.
@@ -66,6 +82,10 @@ PAPERS_EMAIL=your.real@example.org
 # OpenAlex activated account key (USD-credit model; required to cursor-page
 # past the first page and to run the configured overnight discovery profile).
 OPENALEX_API_KEY=your_openalex_key
+
+# Semantic Scholar (optional enrichment key; keyless shared-IP access is
+# the default and skips on 429). Leave unset unless you have one.
+# SEMANTIC_SCHOLAR_API_KEY=your_s2_key
 
 # OpenAI-compatible model endpoint.
 PAPERS_LLM_API_KEY=your_llm_api_key

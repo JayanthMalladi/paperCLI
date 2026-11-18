@@ -108,7 +108,9 @@ def _check_provider_credentials(cfg, env) -> dict[str, Any]:
         env_ref, present = _resolve_credential(
             pdoc if isinstance(pdoc, dict) else {}, env
         )
-        optional = name in ("openalex",)  # OpenAlex is usable keyless.
+        # Optional-credential providers: usable keyless (OpenAlex budget),
+        # or enrichment-only where 429/miss is a recorded skip, not a failure.
+        optional = name in ("openalex", "semantic_scholar", "s2")
         if present:
             status = "pass"
             msg = "Credential present."

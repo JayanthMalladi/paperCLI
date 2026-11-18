@@ -128,6 +128,19 @@ DEFAULTS: dict[str, Any] = {
         "crossref": {"enabled": True},
         "openalex": {"enabled": True, "api_key_env": "OPENALEX_API_KEY"},
         "arxiv": {"enabled": True},
+        "semantic_scholar": {"enabled": True, "key_env": "SEMANTIC_SCHOLAR_API_KEY"},
+    },
+    "network": {
+        # Explicit local-dev opt-out for the URL guard (spec section 16):
+        # allow loopback/private targets in metadata+document transports.
+        "allow_local": False,
+    },
+    "retrieval": {
+        # Step 4 of the retrieval order (spec section 8): where validated
+        # full text is written.
+        "out_dir": ".papercli/papers",
+        "max_document_mb": 50,
+        "min_document_bytes": 2048,
     },
     "model": {
         "adapter": "openai_compatible",
