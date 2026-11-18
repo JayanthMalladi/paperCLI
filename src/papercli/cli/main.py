@@ -36,6 +36,7 @@ from papercli.cli.errors import (
     InternalError,
     NetworkError,
     NotImplemented as NotImplementedErr,
+    RetrievalUnavailable,
 )
 from papercli.agent_contract import schema_names, validate_envelope
 
@@ -59,12 +60,6 @@ __all__ = ["build_parser", "main", "cli_entry"]
 # (exit 2) instead of a usage error.
 _NOT_IMPL: dict[str, dict] = {
 
-
-
-    "read": {"phase": "Phase 3", "desc": "Page/section extraction from a document",
-             "pos": ["file"], "opt": ["--pages", "--max-chars"]},
-    "ingest": {"phase": "Phase 3", "desc": "Import a local document into a run",
-               "pos": ["file"], "opt": ["--run"]},
     "review plan": {"phase": "Phase 4", "desc": "Generate a validated research plan from a brief",
                     "pos": [], "opt": ["--brief", "--out"]},
     "review run": {"phase": "Phase 4", "desc": "Launch a review run (foreground or detached)",
@@ -393,6 +388,169 @@ def _cmd_fetch(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Document parsing commands (Phase 3)
+# ---------------------------------------------------------------------------
+
+def _parse_pages_arg(raw: str | None) -> list[int] | None:
+    """Parse a ``--pages`` value like ``"1-3"``, ``"2"``, or ``"1,3,5"``.
+
+    Returns a list of 1-based page numbers, or None when the flag is
+    absent. Raises ValueError (-> exit 2) on malformed ranges.
+    """
+    if raw is None:
+        return None
+    out: list[int] = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, _, b = part.partition("-")
+            lo, hi = int(a), int(b)
+            if lo < 1 or hi < lo:
+                raise ValueError(f"invalid page range: {part!r}")
+            out.extend(range(lo, hi + 1))
+        else:
+            pg = int(part)
+            if pg < 1:
+                raise ValueError(f"invalid page number: {part!r}")
+            out.append(pg)
+    return out or None
+
+
+def _cmd_read(args: argparse.Namespace) -> None:
+    """Extract text + locations + warnings from a local document."""
+    from papercli.documents.parser import parse_document, ParseError
+    from papercli.providers.cache import detect_document_kind
+
+    path = Path(args.file)
+    if not path.exists():
+        raise ConfigError(f"document file not found: {args.file}",
+                          details={"file": str(args.file)})
+    data = path.read_bytes()
+    kind = detect_document_kind(data)
+    if kind not in ("pdf", "xml", "html"):
+        raise RetrievalUnavailable(
+            f"unsupported document kind: {kind!r}; PDF/HTML/XML only",
+            details={"file": str(path), "detected_kind": kind})
+
+    pages_wanted = _parse_pages_arg(getattr(args, "pages", None))
+    max_chars = int(getattr(args, "max_chars", None) or 18000)
+    try:
+        report = parse_document(data, kind)
+    except ParseError as e:
+        raise ConfigError(f"document parse failed: {e}",
+                          details={"file": str(path), "kind": kind})
+
+    all_sections = report["text_index"]
+    if pages_wanted is not None:
+        all_sections = [s for s in all_sections if s["page"] in pages_wanted]
+
+    # Page text assembly: stable-location ordered, capped at max_chars.
+    selected: list[dict[str, Any]] = []
+    budget = 0
+    for s in all_sections:
+        piece = s["text"]
+        if budget + len(piece) > max_chars and selected:
+            break
+        selected.append(s)
+        budget += len(piece)
+    truncated = len(selected) < len(all_sections)
+    text = "\n\n".join(s["text"] for s in selected)
+
+    warnings = list(report["warnings"])
+    if report["scanned"]:
+        warnings.append("scanned pages flagged: no text extracted (OCR out of scope)")
+    if truncated:
+        warnings.append(f"output capped at {max_chars} chars; "
+                       f"{len(all_sections) - len(selected)} location(s) omitted")
+
+    emit(ok(
+        data={
+            "file": str(path),
+            "kind": kind,
+            "page_count": report["page_count"],
+            "requested_pages": pages_wanted,
+            "text": text,
+            "locations": [
+                {"page": s["page"], "section": s["section"],
+                 "paragraph": s["paragraph"]} for s in selected
+            ],
+            "characters": len(text),
+            "scanned": report["scanned"],
+        },
+        warnings=warnings,
+    ))
+
+
+def _cmd_ingest(args: argparse.Namespace) -> None:
+    """Import a local PDF/HTML/XML into a run's Document registry."""
+    from papercli.documents.ingest import IngestRejected, ingest_local_document
+    from papercli.storage.db import PaperStore
+
+    run_id = args.run
+    with PaperStore() as store:
+        if store.run_row(run_id) is None:
+            raise ConfigError(
+                f"run not found: {run_id}",
+                details={"run_id": run_id},
+            )
+        # Run-context paper id: use the first paper in the run that carries
+        # an identity (doi / arXiv id / title), so the wrong-paper guard has
+        # a requested identity to compare. A paper row with no identity is
+        # not a usable guard context.
+        import json as _json
+        paper_id: str | None = None
+        requested_identity: dict[str, Any] = {}
+        for row in store.papers_for_run(run_id):
+            ids = _json.loads(row.get("canonical_ids_json") or "{}")
+            cand = {k: v for k, v in {
+                "doi": ids.get("doi"),
+                "arxiv_id": ids.get("arxiv_id"),
+                "title": row.get("title"),
+            }.items() if v}
+            if cand:
+                paper_id = row["id"]
+                requested_identity = cand
+                break
+        if paper_id is None:
+            requested_identity = {}
+        try:
+            report = ingest_local_document(
+                store, run_id, args.file, paper_id=paper_id,
+                requested_identity=requested_identity,
+            )
+        except IngestRejected as e:
+            raise RetrievalUnavailable(
+                e.reason, details={"file": str(Path(args.file)),
+                                   **e.details})
+        # Re-read the warnings (ingest adds identity-flag warnings after the
+        # document row exists).
+        warnings = list(report.get("parse_warnings") or [])
+        doc = store.document_row(report["document_id"])
+        if doc and doc.get("identity_status") == "inconclusive":
+            warnings = warnings or []
+            warnings.append("wrong-paper guard: identity could not be confirmed "
+                            "(inconclusive); document flagged")
+        emit(ok(
+            data={
+                "run_id": run_id,
+                "document_id": report["document_id"],
+                "paper_id": report.get("paper_id") or paper_id,
+                "kind": report["kind"],
+                "content_hash": report["content_hash"],
+                "access_status": report["access_status"],
+                "page_count": report["page_count"],
+                "sections_stored": report["sections_stored"],
+                "scanned": report["scanned"],
+                "identity_status": report["identity_status"],
+                "identity": report.get("identity"),
+            },
+            warnings=warnings,
+        ))
+
+
+# ---------------------------------------------------------------------------
 # Argparse builder
 # ---------------------------------------------------------------------------
 
@@ -470,6 +628,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_fetch.add_argument("--out", default=None,
                          help="Output dir for validated documents (default: retrieval.out_dir).")
     p_fetch.set_defaults(func=_cmd_fetch)
+
+    # Document parsing commands (Phase 3).
+    p_read = sub.add_parser(
+        "read",
+        help="Extract text + locations + warnings from a local document "
+             "(PDF/HTML/XML).")
+    p_read.add_argument("file", help="Path to the local document.")
+    p_read.add_argument("--pages", default=None,
+                        help="Page selection, e.g. '1-3' or '1,3,5' (default: all).")
+    p_read.add_argument("--max-chars", dest="max_chars", default="18000",
+                        help="Output character ceiling (default: 18000).")
+    p_read.set_defaults(func=_cmd_read)
+
+    p_ingest = sub.add_parser(
+        "ingest",
+        help="Import a local PDF/HTML/XML into a run's Document registry "
+             "(hash + provenance; identity-checked when the run has a paper).")
+    p_ingest.add_argument("file", help="Path to the local document.")
+    p_ingest.add_argument("--run", required=True,
+                          help="Run id to attach the document to.")
+    p_ingest.set_defaults(func=_cmd_ingest)
 
     # All remaining NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
     for cmd, spec in _NOT_IMPL.items():
