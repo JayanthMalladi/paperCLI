@@ -26,6 +26,11 @@ from typing import Any
 
 from papercli.documents.identity import check_identity
 from papercli.documents.parser import ParseError, parse_document
+from papercli.research.quality import (
+    cap_document_access_level,
+    compute_parse_grade,
+    has_extracted_text,
+)
 from papercli.providers.cache import detect_document_kind, sha256_of
 from papercli.storage.db import PaperStore
 
@@ -140,19 +145,31 @@ def ingest_local_document(
 
     # Phase-2 persistence path (no duplicate storage): raw bytes + hash +
     # source + access status via record_document, then the Phase-3 columns.
+    # D-1/D-3: compute the parse-quality GRADE from the Phase-3 signals and
+    # cap the access level -- a parsed-but-scanned/partial document is never
+    # represented as fully read (spec section 19 "Missing text").
+    grade = compute_parse_grade(report)
+    text_present = has_extracted_text(report)
+    # access_status stays "retrieved_full_text" (the file WAS retrieved);
+    # the EFFECTIVE spec access level starts at full_text and the cap may
+    # only LOWER it (scanned/partial -> partial_full_text at most).
+    access_level = cap_document_access_level(
+        "full_text", grade, text_present)
+
     doc_paper_id = paper_id if paper_id else _auto_paper_id(store, run_id)
     doc_id = store.record_document(
         doc_paper_id,
         source_url=f"local:{file_path.name}",
         content_hash=sha256_of(data),
         access_status=LOCAL_ACCESS_STATUS,
-        parse_quality=kind,
+        parse_quality=grade,
         raw_path=str(file_path),
         parse_warnings=report["warnings"],
         page_count=report["page_count"],
         scanned=report["scanned"],
         identity_status=identity_status,
         identity=identity_result.get("details", {}),
+        access_level=access_level,
     )
     # Stable (page, section, paragraph) -> text index for evidence locations.
     n = store.store_document_text(doc_id, report["text_index"])
@@ -162,6 +179,10 @@ def ingest_local_document(
         warnings.append(
             "wrong-paper guard: identity could not be confirmed "
             "(embedded evidence inconclusive); document flagged")
+    if grade not in ("good",):
+        warnings.append(
+            f"parse_quality={grade}; document is not represented as fully "
+            f"read (effective access level: {access_level})")
 
     return {
         "document_id": doc_id,
@@ -169,6 +190,8 @@ def ingest_local_document(
         "kind": kind,
         "content_hash": sha256_of(data),
         "access_status": LOCAL_ACCESS_STATUS,
+        "access_level": access_level,
+        "parse_grade": grade,
         "page_count": report["page_count"],
         "parse_warnings": warnings,
         "scanned": report["scanned"],

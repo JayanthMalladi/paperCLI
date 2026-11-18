@@ -59,17 +59,16 @@ def test_config_show_exits_0(tmp_project):
 #: belong here (their offline behavior is covered in the provider tests).
 _STUB_COMMANDS = [
     # Phase 3 implemented "read" and "ingest" (see test_phase3_*.py);
-    # the remaining contract commands are still documented NOT_IMPLEMENTED.
-    ["review", "plan", "--brief", "b.md", "--out", "plan.yaml"],
+    # Phase 4 implemented "review plan", "task next", "task submit", and
+    # "evidence list" (wired into live commands -- their offline behavior is
+    # covered in test_phase4_research.py), so they no longer belong here.
+    # The remaining contract commands are still documented NOT_IMPLEMENTED.
     ["review", "run", "--plan", "p.yaml", "--detach"],
     ["review", "status", "RUN_ID"],
     ["review", "logs", "RUN_ID", "--follow"],
     ["review", "resume", "RUN_ID", "--detach"],
     ["review", "cancel", "RUN_ID"],
     ["review", "export", "RUN_ID", "--formats", "md,bib"],
-    ["task", "next", "--run", "RUN_ID", "--worker", "AGENT_ID"],
-    ["task", "submit", "TASK_ID", "--input", "result.json"],
-    ["evidence", "list", "--run", "RUN_ID"],
     ["citations", "audit", "--run", "RUN_ID"],
     ["skill", "export", "--out", "./papercli-skill"],
 ]

@@ -111,15 +111,15 @@
           "minimum": 1
         },
         "max_model_calls": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "max_input_tokens": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "max_output_tokens": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1
         },
         "max_estimated_cost_usd": {

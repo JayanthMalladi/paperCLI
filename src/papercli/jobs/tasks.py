@@ -405,16 +405,23 @@ def submit(queue: TaskQueue, run_id: str, task_id: str, worker: str,
     now = _now_iso()
     conn = queue._conn
 
-    # Duplicate guard (unique index on task_submissions(task_id, payload_hash)).
+    # Duplicate guard (idempotency, spec section 6): the SAME payload
+    # already ACCEPTED by this task returns the prior result. Only accepted
+    # rows carry a result; a REJECTED submission (stale / invalid /
+    # source-mismatch) produced no result and must NOT shadow a fresh claim.
+    # Otherwise a different worker that reclaims a recovered task and
+    # resubmits the identical payload would be wrongly deduped against the
+    # earlier rejection instead of accepted.
     prior = conn.execute(
-        "SELECT * FROM task_submissions WHERE task_id=? AND payload_hash=?",
-        (task_id, phash),
+        "SELECT * FROM task_submissions WHERE task_id=? AND payload_hash=? "
+        "AND status=?",
+        (task_id, phash, SubmissionOutcome.ACCEPTED),
     ).fetchone()
     if prior is not None:
         prev = json.loads(prior["result_json"] or "{}")
         return {
             "status": SubmissionOutcome.DUPLICATE,
-            "reason": "same payload hash already submitted; prior result returned",
+            "reason": "same payload hash already accepted; prior result returned",
             "prior_result": prev,
             "payload_hash": phash,
         }
@@ -472,6 +479,16 @@ def submit(queue: TaskQueue, run_id: str, task_id: str, worker: str,
     queue.complete(run_id, task_id, worker, result_hash=phash, result=payload)
     sub_id = PaperStore.new_id("sub")
     with conn:
+        # The 0002 UNIQUE index on (task_id, payload_hash) spans all statuses,
+        # so a REJECTED audit row for this payload would collide with the
+        # accepted insert. A rejected submission is not a result and never
+        # shadows a later acceptance by a reclaiming worker, so clear any
+        # non-accepted rows for this payload before recording the accepted one.
+        conn.execute(
+            "DELETE FROM task_submissions WHERE task_id=? AND payload_hash=? "
+            "AND status <> ?",
+            (task_id, phash, SubmissionOutcome.ACCEPTED),
+        )
         conn.execute(
             "INSERT INTO task_submissions (id, task_id, run_id, worker, "
             "payload_hash, status, result_hash, result_json) "

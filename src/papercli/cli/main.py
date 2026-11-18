@@ -60,26 +60,18 @@ __all__ = ["build_parser", "main", "cli_entry"]
 # (exit 2) instead of a usage error.
 _NOT_IMPL: dict[str, dict] = {
 
-    "review plan": {"phase": "Phase 4", "desc": "Generate a validated research plan from a brief",
-                    "pos": [], "opt": ["--brief", "--out"]},
-    "review run": {"phase": "Phase 4", "desc": "Launch a review run (foreground or detached)",
+    "review run": {"phase": "Phase 6", "desc": "Launch a review run (foreground or detached)",
                    "pos": [], "opt": ["--plan", "--detach"]},
-    "review status": {"phase": "Phase 4", "desc": "Query run status",
+    "review status": {"phase": "Phase 6", "desc": "Query run status",
                       "pos": ["run_id"], "opt": []},
-    "review logs": {"phase": "Phase 4", "desc": "Stream run logs",
+    "review logs": {"phase": "Phase 6", "desc": "Stream run logs",
                     "pos": ["run_id"], "opt": ["--follow"]},
-    "review resume": {"phase": "Phase 4", "desc": "Resume an interrupted run",
+    "review resume": {"phase": "Phase 6", "desc": "Resume an interrupted run",
                       "pos": ["run_id"], "opt": ["--detach"]},
-    "review cancel": {"phase": "Phase 4", "desc": "Cancel a running review",
+    "review cancel": {"phase": "Phase 6", "desc": "Cancel a running review",
                       "pos": ["run_id"], "opt": []},
     "review export": {"phase": "Phase 7", "desc": "Export the output bundle for a completed run",
                       "pos": ["run_id"], "opt": ["--formats"]},
-    "task next": {"phase": "Phase 4", "desc": "Lease the next task for an external worker",
-                  "pos": [], "opt": ["--run", "--worker"]},
-    "task submit": {"phase": "Phase 4", "desc": "Submit a task result",
-                    "pos": ["task_id"], "opt": ["--input"]},
-    "evidence list": {"phase": "Phase 4", "desc": "List evidence records for a run",
-                      "pos": [], "opt": ["--run"]},
     "citations audit": {"phase": "Phase 7", "desc": "Run citation and claim-support audit",
                         "pos": [], "opt": ["--run"]},
     "skill export": {"phase": "Phase 7", "desc": "Export the portable agent skill folder",
@@ -532,22 +524,215 @@ def _cmd_ingest(args: argparse.Namespace) -> None:
             warnings = warnings or []
             warnings.append("wrong-paper guard: identity could not be confirmed "
                             "(inconclusive); document flagged")
-        emit(ok(
+        # D-1 disclosure: surface the parse-quality grade + the capped
+        # effective access level so the envelope never represents a
+        # scanned/partial document as fully read.
+        data = {
+            "run_id": run_id,
+            "document_id": report["document_id"],
+            "paper_id": report.get("paper_id") or paper_id,
+            "kind": report["kind"],
+            "content_hash": report["content_hash"],
+            "access_status": report["access_status"],
+            "access_level": report["access_level"],
+            "parse_grade": report["parse_grade"],
+            "page_count": report["page_count"],
+            "sections_stored": report["sections_stored"],
+            "scanned": report["scanned"],
+            "identity_status": report["identity_status"],
+            "identity": report.get("identity"),
+        }
+        if report["parse_grade"] not in ("good",):
+            data["missing_text_disclosure"] = (
+                f"parse_quality={report['parse_grade']}; the document is "
+                f"represented at access level {report['access_level']}, "
+                "not full text (OCR is out of scope)")
+        emit(ok(data=data, warnings=warnings))
+
+
+# ---------------------------------------------------------------------------
+# Research planning + task protocol (Phase 4)
+# ---------------------------------------------------------------------------
+
+def _cmd_review_plan(args: argparse.Namespace) -> None:
+    """``papers review plan --brief <file> --out review-plan.yaml``.
+
+    Validates the brief against the Phase-1 schema (preflight failures are
+    exit 2 with the missing field named), expands a deterministic
+    database-specific query plan (no model calls), writes the plan YAML,
+    and creates the planned Run row with protocol hash + config snapshot.
+    A changed brief or config creates a NEW run revision -- never a
+    silent mutation of a prior run (spec section 5).
+    """
+    from papercli.config.loader import Config
+    from papercli.research.plan import BriefError, plan_review
+    from papercli.storage.db import PaperStore
+
+    cfg = Config.load(cli_overrides={}, cwd=Path.cwd())
+    env = dict(cfg.env)
+    import os as _os
+    for name in ("PAPERS_EMAIL", "OPENALEX_API_KEY", "SEMANTIC_SCHOLAR_API_KEY"):
+        if _os.environ.get(name):
+            env[name] = _os.environ[name]
+
+    out_path = getattr(args, "out", None) or "review-plan.yaml"
+    try:
+        with PaperStore() as store:
+            result = plan_review(
+                args.brief, out_path, store=store, cfg=cfg, env=env)
+        env_out = ok(
             data={
-                "run_id": run_id,
-                "document_id": report["document_id"],
-                "paper_id": report.get("paper_id") or paper_id,
-                "kind": report["kind"],
-                "content_hash": report["content_hash"],
-                "access_status": report["access_status"],
-                "page_count": report["page_count"],
-                "sections_stored": report["sections_stored"],
-                "scanned": report["scanned"],
-                "identity_status": report["identity_status"],
-                "identity": report.get("identity"),
+                "plan_id": result["plan_id"],
+                "run_id": result["run_id"],
+                "run_state": result["run_state"],
+                "protocol_hash": result["protocol_hash"],
+                "protocol_revision": result["protocol_revision"],
+                "plan_path": result["plan_path"],
+                "resource_estimate": result["plan"]["resource_estimate"],
+                "queries": len([q for q in result["plan"]["queries"]
+                                if q.get("provider") != "(truncated)"]),
+                "assumptions": result["assumptions"],
+                "ambiguities": result["plan"].get("ambiguities", []),
+                "defaults_applied": result["plan"].get("defaults_applied", []),
             },
-            warnings=warnings,
-        ))
+            warnings=result["plan"].get("ambiguities") or [],
+        )
+        emit(env_out)
+    except BriefError as e:
+        env_out = error(
+            "CONFIG_REQUIRED",
+            message=f"brief preflight failed: {e.message}",
+            retryable=False,
+            details={"field": e.field, "brief": str(Path(args.brief))},
+        )
+        emit(env_out)
+        sys.exit(2)
+
+
+def _cmd_task_next(args: argparse.Namespace) -> None:
+    """``papers task next --run RUN_ID --worker AGENT_ID`` (D-2 fix).
+
+    Leases the next claimable task via the Phase-3 TaskQueue protocol and
+    emits the task payload + lease + expiry. No claimable task is an
+    ``ok`` envelope with ``task: null`` (a full queue is not an error).
+    """
+    from papercli.research.tasks import task_next
+    from papercli.storage.db import PaperStore
+
+    run_id = args.run
+    worker = args.worker
+    with PaperStore() as store:
+        if store.run_row(run_id) is None:
+            raise ConfigError(f"run not found: {run_id}",
+                              details={"run_id": run_id})
+        lease_ttl = float(getattr(args, "lease_ttl", None) or 300)
+        data = task_next(store, run_id, worker, lease_ttl=lease_ttl)
+    emit(ok(data=data))
+
+
+def _cmd_task_submit(args: argparse.Namespace) -> None:
+    """``papers task submit TASK_ID --input result.json`` (D-2 fix).
+
+    Validates the submission against the task queue protocol: distinct
+    rejection codes for invalid / stale / source-inconsistent payloads;
+    a duplicated payload hash returns the prior result (idempotent).
+    """
+    from papercli.research.tasks import load_submission_input, task_submit
+    from papercli.storage.db import PaperStore
+
+    task_id = args.task_id
+    try:
+        payload = load_submission_input(args.input)
+    except FileNotFoundError as e:
+        env_out = error("INPUT_FILE_NOT_FOUND", message=str(e),
+                        retryable=False, details={"input": args.input})
+        emit(env_out)
+        sys.exit(2)
+    except ValueError as e:
+        env_out = error("INPUT_INVALID_JSON", message=str(e),
+                        retryable=False, details={"input": args.input})
+        emit(env_out)
+        sys.exit(2)
+
+    run_id = getattr(args, "run", None)
+    worker = getattr(args, "worker", None)
+    if not run_id or not worker:
+        # Recover the run/worker from the task row when the flags are
+        # absent (the task row is the source of truth for its lease owner).
+        with PaperStore() as store:
+            task = store.connection.execute(
+                "SELECT run_id, lease_owner FROM tasks WHERE id = ?",
+                (task_id,)).fetchone()
+            if task is None:
+                env_out = error(
+                    "TASK_NOT_FOUND",
+                    message=f"task not found: {task_id} (supply --run/--worker "
+                            "or pass --input that belongs to a known task)",
+                    retryable=False, details={"task_id": task_id})
+                emit(env_out)
+                sys.exit(2)
+            run_id = run_id or task["run_id"]
+            worker = worker or task["lease_owner"] or "anonymous"
+            env_out, status = _do_submit(
+                store, run_id, task_id, worker, payload)
+    else:
+        with PaperStore() as store:
+            if store.run_row(run_id) is None:
+                raise ConfigError(f"run not found: {run_id}",
+                                  details={"run_id": run_id})
+            env_out, status = _do_submit(
+                store, run_id, task_id, worker, payload)
+    emit(env_out)
+    if status in ("rejected_invalid", "rejected_stale", "rejected_source",
+                  "rejected_state"):
+        sys.exit(2)
+    # accepted / duplicate -> command succeeded (exit 0).
+
+
+def _do_submit(store, run_id: str, task_id: str, worker: str,
+               payload: dict) -> tuple[dict, str]:
+    """Run the queue submission and shape the envelope."""
+    from papercli.research.tasks import task_submit
+
+    source_input_hash = None
+    row = store.connection.execute(
+        "SELECT input_hash FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is not None:
+        source_input_hash = row["input_hash"]
+    data = task_submit(store, run_id, task_id, worker, payload,
+                       source_input_hash=source_input_hash)
+    status = data["status"]
+    if status == "accepted":
+        return ok(data=data), status
+    if status == "duplicate":
+        return ok(data=data, warnings=[data.get("reason")]), status
+    code = {
+        "rejected_invalid": "TASK_SUBMIT_INVALID",
+        "rejected_stale": "TASK_SUBMIT_STALE",
+        "rejected_source": "TASK_SUBMIT_SOURCE_MISMATCH",
+        "rejected_state": "TASK_SUBMIT_BAD_STATE",
+    }[status]
+    return error(code, message=data.get("reason", status),
+                 retryable=(status in ("rejected_stale", "rejected_state")),
+                 details={"task_id": task_id, "payload_hash":
+                          data.get("payload_hash"), "status": status}), status
+
+
+def _cmd_evidence_list(args: argparse.Namespace) -> None:
+    """``papers evidence list --run RUN_ID``: the run's evidence records."""
+    from papercli.storage.db import PaperStore
+
+    run_id = args.run
+    with PaperStore() as store:
+        if store.run_row(run_id) is None:
+            raise ConfigError(f"run not found: {run_id}",
+                              details={"run_id": run_id})
+        records = store.evidence_for_run(run_id)
+    emit(ok(data={
+        "run_id": run_id,
+        "count": len(records),
+        "evidence": records,
+    }))
 
 
 # ---------------------------------------------------------------------------
@@ -650,8 +835,59 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Run id to attach the document to.")
     p_ingest.set_defaults(func=_cmd_ingest)
 
+    # Phase 4: implemented research commands (replace the Phase 1 stubs).
+    def _ensure_group(group_name: str, help_text: str):
+        if group_name not in _group_map:
+            gp = sub.add_parser(group_name, help=help_text)
+            gp_sub = gp.add_subparsers(
+                dest=f"{group_name}_sub", metavar="subcommand")
+            _group_map[group_name] = gp_sub
+        return _group_map[group_name]
+
+    _implemented_cmds = {"review plan", "task next", "task submit",
+                         "evidence list"}
+
+    review_sub = _ensure_group("review", "Group: review (research pipeline)")
+    task_sub = _ensure_group("task", "Group: task (lease-based task protocol)")
+    evidence_sub = _ensure_group("evidence", "Group: evidence records")
+
+    p_rplan = review_sub.add_parser(
+        "plan", help="Validate a brief into a research protocol + planned Run.")
+    p_rplan.add_argument("--brief", required=True,
+                        help="Path to the research brief (YAML content).")
+    p_rplan.add_argument("--out", default="review-plan.yaml",
+                         help="Where to write the plan YAML "
+                              "(default: review-plan.yaml).")
+    p_rplan.set_defaults(func=_cmd_review_plan)
+
+    p_tnext = task_sub.add_parser(
+        "next", help="Lease the next task for an external worker.")
+    p_tnext.add_argument("--run", required=True, help="Run id.")
+    p_tnext.add_argument("--worker", required=True, help="Agent/worker id.")
+    p_tnext.add_argument("--lease-ttl", dest="lease_ttl", default="300",
+                         help="Lease TTL in seconds (default 300).")
+    p_tnext.set_defaults(func=_cmd_task_next)
+
+    p_tsub = task_sub.add_parser(
+        "submit", help="Submit a task result (validated, idempotent).")
+    p_tsub.add_argument("task_id", help="Task id from `papers task next`.")
+    p_tsub.add_argument("--input", required=True,
+                        help="Path to the result JSON payload.")
+    p_tsub.add_argument("--run", default=None,
+                        help="Run id (or recovered from the task row).")
+    p_tsub.add_argument("--worker", default=None,
+                        help="Worker id (defaults to the task's lease owner).")
+    p_tsub.set_defaults(func=_cmd_task_submit)
+
+    p_elist = evidence_sub.add_parser(
+        "list", help="List the run's evidence records.")
+    p_elist.add_argument("--run", required=True, help="Run id.")
+    p_elist.set_defaults(func=_cmd_evidence_list)
+
     # All remaining NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
     for cmd, spec in _NOT_IMPL.items():
+        if cmd in _implemented_cmds:
+            continue
         parts = cmd.split()
         if len(parts) == 1:
             target_sub = sub

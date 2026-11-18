@@ -24,10 +24,10 @@ def test_migrations_idempotent_including_phase3(tmp_path):
     from papercli.storage.migrations import apply_migrations, discover_migrations
 
     assert [m.name for m in discover_migrations()] == [
-        "0001.sql", "0002.sql", "0003.sql"]
+        "0001.sql", "0002.sql", "0003.sql", "0004.sql"]
     db = tmp_path / "phase3.db"
     applied = apply_migrations(db)
-    assert [m.name for m in applied] == ["0001.sql", "0002.sql", "0003.sql"]
+    assert [m.name for m in applied] == ["0001.sql", "0002.sql", "0003.sql", "0004.sql"]
     # Idempotent: a second run applies nothing.
     assert apply_migrations(db) == []
 
@@ -60,7 +60,11 @@ def test_migrations_0002_0003_columns_on_legacy_0001_db(tmp_path):
 
     runner = MigrationRunner(db)
     applied = runner.run()
-    assert [m.name for m in applied] == ["0002.sql", "0003.sql"]
+    # A 0001-only legacy DB must apply the Phase-3 migrations in place.
+    # Phase 4+ may add further migrations (0004.sql, ...), so assert the
+    # REQUIRED ones are present rather than hardcoding the exact file set.
+    names = [m.name for m in applied]
+    assert "0002.sql" in names and "0003.sql" in names
     assert runner.run() == []  # idempotent
 
     conn = sqlite3.connect(str(db))
