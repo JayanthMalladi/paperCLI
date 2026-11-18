@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Iterable, Mapping
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, quote_plus, urljoin, urlparse, urlunsplit
 
 import httpx
 
@@ -47,6 +47,9 @@ __all__ = [
     "Pacer",
     "RetryPolicy",
     "default_resolver",
+    "mask_url_creds",
+    "CRED_QUERY_PARAMS",
+    "CRED_REDACTED",
 ]
 
 
@@ -56,6 +59,41 @@ __all__ = [
 
 class GuardError(ValueError):
     """A URL or redirect target failed the network guard."""
+
+
+#: Query params that carry credentials (spec sec.16: values must not appear
+#: in cache keys or surfaced error text): Unpaywall ``email``, Crossref
+#: polite-pool ``mailto`` (the same email value), OpenAlex ``api_key``.
+CRED_QUERY_PARAMS = ("email", "mailto", "api_key", "apikey", "api-key")
+CRED_REDACTED = "***REDACTED***"
+
+
+def mask_url_creds(url: str) -> str:
+    """Mask credential query-param values in ``url`` (spec sec.16 + sec.19).
+
+    Values of known credential params become ``=***REDACTED***`` (so the
+    cache key stays informative); every other query param is preserved.
+    The raw value never survives, and percent-encoded forms collapse to the
+    same masked URL because values are decoded before re-masking. The
+    original URL (with credentials) must still be used for the actual
+    request; this form is for cache keys and error text only.
+    """
+    p = urlparse(str(url))
+    if not p.query:
+        return str(url)
+    try:
+        parts: list[str] = []
+        for k, v in parse_qsl(p.query, keep_blank_values=True):
+            if k.lower() in CRED_QUERY_PARAMS and v:
+                parts.append(f"{k}={CRED_REDACTED}")
+            else:
+                parts.append(f"{k}={quote_plus(v)}")
+        query = "&".join(parts)
+    except Exception:
+        # Malformed query: drop it entirely (url_base-style) rather than
+        # risk leaking a credential value.
+        return urlunsplit((p.scheme, p.netloc, p.path, "", p.fragment))
+    return urlunsplit((p.scheme, p.netloc, p.path, query, p.fragment))
 
 
 class HttpError(Exception):
@@ -74,6 +112,12 @@ class HttpError(Exception):
         self.url = url
         self.status_code = status_code
         self.retryable = retryable
+
+    def __str__(self) -> str:
+        # ``self.message`` is the authoritative text (the transport masks
+        # credential query-params in it, sec.16 + sec.19); fall back to the
+        # original args when the attribute is absent (e.g. unpickled).
+        return self.message
 
 
 # ---------------------------------------------------------------------------
@@ -398,23 +442,32 @@ class HttpTransport:
         cache_ttl: float | None = None,
         cache_negative: bool = True,
     ) -> HttpResponse:
-        """GET ``url`` with guard, pacing, retry, and optional caching."""
+        """GET ``url`` with guard, pacing, retry, and optional caching.
+
+        The request itself carries any credential query-params; but cache
+        entries and error text use a credential-free form (``cache_url``)
+        so secrets never persist to disk or surface to the caller
+        (spec sec.16 + sec.19 no-secret-leak).
+        """
         request_url = str(url)
         if params:
             request_url = str(httpx.URL(request_url).copy_merge_params(params))
+        # Cache key + error text: credential query-params masked. The real
+        # request still carries them.
+        cache_url = mask_url_creds(request_url)
 
         if cache is not None:
-            hit = cache.get(request_url)
+            hit = cache.get(cache_url)
             if hit is not None:
                 return hit
             # A still-fresh NEGATIVE entry means the last attempt failed
             # recently; the short negative TTL is our re-try budget. Skip
             # the network while it is valid.
-            if cache.has_negative(request_url):
+            if cache.has_negative(cache_url):
                 raise HttpError(
-                    f"retrieval for {request_url} is negatively cached "
+                    f"retrieval for {cache_url} is negatively cached "
                     f"(retry budget not yet elapsed)",
-                    url=request_url, retryable=True,
+                    url=cache_url, retryable=True,
                 )
 
         req_headers = {str(k).lower(): v for k, v in (headers or {}).items()}
@@ -430,20 +483,25 @@ class HttpTransport:
                 self._pacer.wait()
             try:
                 resp = self._walk_redirects(current, req_headers, redirect_hops)
-            except HttpError:
+            except HttpError as e:
                 if cache is not None and cache_negative:
-                    cache.store_negative(request_url, status=None, note="transport failure")
+                    cache.store_negative(cache_url, status=None, note="transport failure")
+                # Never surface a credential-bearing URL in the error text
+                # (spec sec.16 + sec.19).
+                e.message = mask_url_creds(e.message)
+                if e.url:
+                    e.url = mask_url_creds(e.url)
                 raise
             except httpx.TransportError as e:
                 # connection reset / timeout class: transient
                 if cache is not None and cache_negative:
-                    cache.store_negative(request_url, status=None, note=type(e).__name__)
+                    cache.store_negative(cache_url, status=None, note=type(e).__name__)
                 if attempts < self._retry.max_attempts:
                     self._sleep_backoff(attempts, None, None)
                     continue
                 raise HttpError(
-                    f"transport failure for {request_url}: {type(e).__name__}",
-                    url=request_url, retryable=True,
+                    f"transport failure for {cache_url}: {type(e).__name__}",
+                    url=cache_url, retryable=True,
                 ) from e
 
             status = resp.status_code
@@ -456,17 +514,17 @@ class HttpTransport:
             # Final status (2xx, permanent 4xx, or exhausted transients).
             if cache is not None:
                 if 200 <= status < 300:
-                    cache.store(request_url, status, resp.content,
+                    cache.store(cache_url, status, resp.content,
                                mime=resp.mime, ttl=cache_ttl)
                 elif cache_negative:
-                    cache.store_negative(request_url, status=status,
+                    cache.store_negative(cache_url, status=status,
                                          note=f"HTTP {status}")
             if last_transient is not None and status == 429:
                 # A 429 that survived all bounded attempts is a rate-limit
                 # error for the caller (exit 5 class), not a usable body.
                 raise HttpError(
-                    f"rate limited after {attempts} attempts: {request_url}",
-                    url=request_url, status_code=status, retryable=True,
+                    f"rate limited after {attempts} attempts: {cache_url}",
+                    url=cache_url, status_code=status, retryable=True,
                 )
             return resp
 

@@ -7,6 +7,7 @@ research/upstream/scientific-agent-skills/
 # local dev artifacts (never commit)
 .venv/
 .venv-test/
+.venv-fix/
 .papercli/
 dist/
 build/

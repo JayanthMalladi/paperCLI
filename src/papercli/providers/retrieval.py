@@ -30,6 +30,7 @@ from papercli.providers.arxiv import ArxivAdapter
 from papercli.providers.cache import RetrievalCache, detect_document_kind, sha256_of
 from papercli.providers.crossref import CrossrefAdapter
 from papercli.providers.http_layer import (
+    HttpError,
     HttpGuard,
     HttpTransport,
     Pacer,
@@ -109,16 +110,22 @@ def make_metadata_transport(config: Any, *, pacer_interval: float = 0.1) -> Http
     )
 
 
-def make_document_transport(config: Any, target_url: str) -> HttpTransport:
-    """A content-download transport paced for the target host."""
-    from urllib.parse import urlparse
-
-    host = (urlparse(target_url).hostname or "").lower()
+def _pacing_for(host: str) -> float:
+    """Pacing interval (seconds) for a target host; 0.2 s default."""
     interval = 0.2
     for prefix, secs in _HOST_PACING.items():
         if host == prefix or host.endswith("." + prefix):
             interval = secs
             break
+    return interval
+
+
+def make_document_transport(config: Any, target_url: str) -> HttpTransport:
+    """A content-download transport paced for the target host."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(target_url).hostname or "").lower()
+    interval = _pacing_for(host)
     guard = make_guard(config)
     timeout, ceiling = _timeout_and_ceiling(config)
     retry = RetryPolicy(
@@ -170,7 +177,14 @@ class SearchService:
     def search(self, query: str, providers: list[str], limit: int = 50) -> dict[str, Any]:
         """One JSON envelope body: records + per-provider provenance + dedup."""
         requested = [p.strip().lower() for p in providers if p.strip()]
-        known = {"crossref", "openalex", "arxiv", "s2", "semantic_scholar"}
+        # Registry-driven dispatch: every registered provider (Phase 1
+        # registry + any newly registered adapter) is a known provider;
+        # only names absent from the registry are CLI input errors
+        # (ValueError -> CONFIG_REQUIRED, exit 2 envelope).
+        from papercli.providers.registry import get_registry
+        registry = get_registry()
+        known = set(registry.names())
+        known.add("semantic_scholar")  # alias for the registered "s2"
         unknown = [p for p in requested if p not in known]
         if unknown:
             raise ValueError(f"unknown provider(s): {', '.join(sorted(unknown))}")
@@ -185,16 +199,10 @@ class SearchService:
         provenance: list[dict[str, Any]] = []
         errors: list[str] = []
 
-        # Lazy adapters (only for providers actually requested).
-        cf = oa = ax = s2 = None
-        if "crossref" in provs:
-            cf = CrossrefAdapter()
-        if "openalex" in provs:
-            oa = OpenAlexAdapter()
-        if "arxiv" in provs:
-            ax = ArxivAdapter()
-        if "s2" in provs:
-            s2 = SemanticScholarAdapter()
+        # Adapters come from the registry (only for providers actually
+        # requested); a newly registered adapter works with no retrieval.py
+        # edit.
+        adapters = {n: registry.get(n) for n in dict.fromkeys(provs)}
 
         for name in provs:
             prov = {
@@ -209,14 +217,13 @@ class SearchService:
                 "records_included": 0,
             }
             try:
-                if name == "crossref":
-                    out = self._search_crossref(cf, query, limit, prov)
-                elif name == "openalex":
-                    out = self._search_openalex(oa, query, limit, prov)
-                elif name == "arxiv":
-                    out = self._search_arxiv(ax, query, limit, prov)
+                # Dedicated per-provider handlers win; anything else goes
+                # through the generic registry dispatch below.
+                handler = getattr(self, f"_search_{name}", None)
+                if handler is not None:
+                    out = handler(adapters[name], query, limit, prov)
                 else:
-                    out = self._search_s2(s2, query, limit, prov)
+                    out = self._search_generic(adapters[name], name, query, limit, prov)
             except Exception as e:  # noqa: BLE001 -- per-provider isolation
                 prov["error"] = f"{type(e).__name__}: {e}"
                 prov["completeness"] = "incomplete"
@@ -343,6 +350,45 @@ class SearchService:
         prov["result_count"] = len(items)
         prov["completeness"] = "partial"  # one page of S2 results
         records = [_record_s2(p) for p in items]
+        prov["records_included"] = len(records)
+        return records
+
+    def _search_generic(self, adapter, name: str, query: str, limit: int,
+                        prov: dict) -> list[dict]:
+        """Registry dispatch for providers without a dedicated handler.
+
+        Calls the adapter's common ``search`` signature and normalizes the
+        records through the generic record mapper, so a newly registered
+        provider works with zero retrieval.py edits.
+        """
+        from urllib.parse import urlparse
+        host = (urlparse(getattr(getattr(adapter, "info", None), "base_url", "")
+                          or "").hostname or "").lower()
+        tr = make_metadata_transport(self.config, pacer_interval=_pacing_for(host))
+        try:
+            out = adapter.search(query, self.config, self.env, transport=tr,
+                                 cache=self.cache, limit=limit)
+        finally:
+            tr.close()
+        if not isinstance(out, dict):
+            out = {}
+        if out.get("skipped"):
+            # Graceful degrade, same semantics as S2.
+            prov["skipped"] = True
+            prov["completeness"] = "skipped"
+            prov["skip_reason"] = out.get("reason")
+            return []
+        if out.get("error"):
+            prov["error"] = out["error"]
+            prov["completeness"] = "incomplete"
+            return []
+        records = [_record_generic(r, name) for r in _result_items(out)]
+        prov["result_count"] = len(records)
+        prov["cursor"] = out.get("next_cursor")
+        prov["completeness"] = (
+            "complete" if (out.get("total_results") is not None
+                             and out["total_results"] <= limit) else "partial"
+        )
         prov["records_included"] = len(records)
         return records
 
@@ -486,6 +532,64 @@ def _record_s2(p: dict) -> dict[str, Any]:
         ),
         "citation_count": p.get("citationCount"),
         "venue": p.get("venue"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Generic (registry-driven) dispatch helpers
+# ---------------------------------------------------------------------------
+
+def _result_items(out: dict) -> list[dict]:
+    """Extract the item list from a provider search result dict.
+
+    Tries, in order: a dedicated record mapper's shape via the common keys
+    ``items`` (Crossref/OpenAlex), ``data`` (S2 envelope), then any list-typed
+    value. Each item must be a dict (non-dict items are skipped).
+    """
+    items = out.get("items")
+    if isinstance(items, list):
+        return [x for x in items if isinstance(x, dict)]
+    data = out.get("data")
+    if isinstance(data, dict):
+        inner = data.get("data")
+        if isinstance(inner, list):
+            return [x for x in inner if isinstance(x, dict)]
+    for v in out.values():
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            return v
+    return []
+
+
+def _record_generic(item: dict, provider: str) -> dict[str, Any]:
+    """Shape one raw item into the shared record shape (dedup-safe)."""
+    ext = item.get("externalIds") or {}
+    year = None
+    for ykey in ("year", "publicationYear"):
+        ystr = str(item.get(ykey) or "")
+        if ystr.isdigit():
+            year = int(ystr)
+            break
+    doi = item.get("doi") or item.get("DOI") or ext.get("DOI")
+    authors = (
+        [a.get("family") for a in (item.get("author") or []) if isinstance(a, dict) and a.get("family")]
+        or [a.get("name") for a in (item.get("authors") or []) if isinstance(a, dict) and a.get("name")]
+        or None
+    )
+    title = item.get("title")
+    if isinstance(title, (list, tuple)):
+        title = (title or [None])[0]
+    title = title or item.get("display_name")
+    url = item.get("url")
+    if not url and doi:
+        url = f"https://doi.org/{str(doi).lower()}"
+    return {
+        "provider": provider,
+        "doi": str(doi).lower() if doi else None,
+        "arxiv_id": ext.get("ArXiv") or item.get("arxiv_id"),
+        "title": title,
+        "authors": authors or None,
+        "year": year,
+        "url": url,
     }
 
 
