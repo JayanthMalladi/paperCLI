@@ -3,3 +3,14 @@ __pycache__/
 *.pyc
 research/upstream/paper-orchestra/
 research/upstream/scientific-agent-skills/
+
+# local dev artifacts (never commit)
+.venv/
+.venv-test/
+.papercli/
+dist/
+build/
+*.egg-info/
+.ci-venv/
+out.txt
+err.txt
