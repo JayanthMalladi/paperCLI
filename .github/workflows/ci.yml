@@ -1,0 +1,71 @@
+# PaperCLI CI
+# Runs on every push and pull request to main.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest (clean venv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install in a clean venv
+        run: |
+          python -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --upgrade pip
+          .ci-venv/bin/python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: .ci-venv/bin/python -m pytest -q
+
+      - name: Smoke-run the installed CLI
+        run: |
+          .ci-venv/bin/papers --version
+          .ci-venv/bin/papers schema --list
+
+  secret-scan:
+    # Fails the build if committed .env files or known key patterns are
+    # present in the tree. This is the CI guard for the "no secrets in
+    # version control" constraint.
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail on committed .env files
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::A committed .env file was found. .env must stay git-ignored."
+            exit 1
+          fi
+
+      - name: Fail on committed key patterns
+        run: |
+          # Scan the *committed* tree (not the working copy) for values that
+          # look like real credentials. These patterns match the key formats
+          # our providers use; the repo must never ship one.
+          set -euo pipefail
+          hits="$(git grep -nE 'sk-[A-Za-z0-9]{16,}|xoxb-[A-Za-z0-9-]+|OPENALEX_API_KEY=(?!.*OPENALEX_API_KEY)[A-Za-z0-9]{16,}|PAPERS_LLM_API_KEY=[A-Za-z0-9]{16,}' -- ':!.github' || true)"
+          if [ -n "${hits// /}" ]; then
+            echo "::error::Possible committed credential detected:"
+            echo "${hits}"
+            exit 1
+          fi
+
+      - name: Verify .gitignore covers .env
+        run: |
+          grep -E '^(\/?\.env)$' .gitignore > /dev/null
