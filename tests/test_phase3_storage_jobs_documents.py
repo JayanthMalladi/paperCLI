@@ -24,10 +24,11 @@ def test_migrations_idempotent_including_phase3(tmp_path):
     from papercli.storage.migrations import apply_migrations, discover_migrations
 
     assert [m.name for m in discover_migrations()] == [
-        "0001.sql", "0002.sql", "0003.sql", "0004.sql"]
+        "0001.sql", "0002.sql", "0003.sql", "0004.sql", "0005.sql"]
     db = tmp_path / "phase3.db"
     applied = apply_migrations(db)
-    assert [m.name for m in applied] == ["0001.sql", "0002.sql", "0003.sql", "0004.sql"]
+    assert [m.name for m in applied] == [
+        "0001.sql", "0002.sql", "0003.sql", "0004.sql", "0005.sql"]
     # Idempotent: a second run applies nothing.
     assert apply_migrations(db) == []
 

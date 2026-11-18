@@ -427,14 +427,28 @@ def submit(queue: TaskQueue, run_id: str, task_id: str, worker: str,
         }
 
     def _record_rejected(status: str, reason: str) -> dict[str, Any]:
-        sub_id = PaperStore.new_id("sub")
-        with conn:
-            conn.execute(
-                "INSERT INTO task_submissions (id, task_id, run_id, worker, "
-                "payload_hash, status, rejection_reason) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (sub_id, task_id, run_id, worker, phash, status, reason),
-            )
+        """Record a rejected submission as an AUDIT row (spec section 6).
+
+        D-P4-3: the insert is idempotent. With the 0005 partial unique
+        index (accepted rows only) rejected audit rows may coexist for the
+        same payload, but a repeated re-send of the SAME rejection (same
+        task + payload + reject code) dedupes to the existing row instead
+        of re-inserting: no duplicate audit noise, no IntegrityError
+        crash -- the CLI returns the same well-formed reject envelope
+        (exit 2) as the first time.
+        """
+        prior_rej = conn.execute(
+            "SELECT 1 FROM task_submissions WHERE task_id=? AND "
+            "payload_hash=? AND status=? LIMIT 1",
+            (task_id, phash, status)).fetchone()
+        if prior_rej is None:
+            sub_id = PaperStore.new_id("sub")
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO task_submissions "
+                    "(id, task_id, run_id, worker, payload_hash, status, "
+                    "rejection_reason) VALUES (?,?,?,?,?,?,?)",
+                    (sub_id, task_id, run_id, worker, phash, status, reason))
         return {"status": status, "reason": reason, "payload_hash": phash}
 
     # Source-consistency: when the task's input hash is supplied, the payload
@@ -479,16 +493,14 @@ def submit(queue: TaskQueue, run_id: str, task_id: str, worker: str,
     queue.complete(run_id, task_id, worker, result_hash=phash, result=payload)
     sub_id = PaperStore.new_id("sub")
     with conn:
-        # The 0002 UNIQUE index on (task_id, payload_hash) spans all statuses,
-        # so a REJECTED audit row for this payload would collide with the
-        # accepted insert. A rejected submission is not a result and never
-        # shadows a later acceptance by a reclaiming worker, so clear any
-        # non-accepted rows for this payload before recording the accepted one.
-        conn.execute(
-            "DELETE FROM task_submissions WHERE task_id=? AND payload_hash=? "
-            "AND status <> ?",
-            (task_id, phash, SubmissionOutcome.ACCEPTED),
-        )
+        # D-P4-2: rejected audit rows are KEPT. The 0005 migration replaced
+        # the 0002 all-status UNIQUE index with a PARTIAL index on accepted
+        # rows only (status='accepted'), so a rejected row for this payload
+        # no longer collides with the accepted insert -- and deleting it
+        # here would destroy the audit trail of an explicitly-rejected
+        # submission (spec section 6). Accepted rows stay unique per
+        # (task_id, payload_hash); the duplicate guard above already
+        # returned the prior result for that case.
         conn.execute(
             "INSERT INTO task_submissions (id, task_id, run_id, worker, "
             "payload_hash, status, result_hash, result_json) "
