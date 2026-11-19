@@ -36,3 +36,6 @@ _miktex_warm.*
 .v8b/
 .v8c/
 .v8fresh/
+
+# local env-var reference (real secret values; never commit)
+LOCAL_ENV_VARS.md
