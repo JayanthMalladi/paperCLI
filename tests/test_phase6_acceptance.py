@@ -797,13 +797,16 @@ def test_gitignore_covers_local_secret_and_venv_paths():
 
 
 # ===========================================================================
-# 7. Exports: honest partial bundles, rendered deferred (Phase 7)
+# 7. Exports: honest partial bundles (Phase 7: rendered, or missing with
+#    an explicit reason -- never silently missing)
 # ===========================================================================
 
 def test_partial_run_exports_valid_partial_bundle(tmp_path):
     """A failed/partial run still exports a VALID partial bundle: the
-    structured dumps + run-summary.json carry the honest state; rendered
-    md/pdf/docx are marked DEFERRED (Phase 7), never silently missing."""
+    structured dumps + run-summary.json carry the honest state; the
+    rendered md/bib/csl/csv artifacts are written (a renderer whose
+    dependency is absent marks ONLY its artifact missing, with a
+    reason), never silently missing."""
     store = PaperStore(tmp_path / "p6a.db")
     limits = dict(FAKE_LIMITS, max_model_calls=1,
                   max_input_tokens=10_000_000)
@@ -811,29 +814,38 @@ def test_partial_run_exports_valid_partial_bundle(tmp_path):
                                       limits=limits)
     assert summary["state"] == "partial"
     out = write_structured_dumps(store, rid,
-                                 formats=["md", "pdf", "docx", "csl", "csv"])
-    # The Phase-6 structured dumps + run summary are all written.
+                                 formats=["md", "pdf", "docx", "bib", "csl",
+                                          "csv"])
+    # The structured dumps + run summary are all written.
     for name in ("evidence.json", "claims.json", "references.csl.json",
                  "papers-registry.json", "screening.json",
                  "search-log.jsonl", "evidence.csv", "screening.csv",
                  "run-summary.json"):
         assert name in out["written"], f"{name} missing from the export"
         assert Path(out["written"][name]).exists()
-    # Rendered formats are DEFERRED (Phase 7), not silently missing.
-    deferred = {d["format"] for d in out["deferred"]}
-    assert {"md", "pdf", "docx"} <= deferred
+    # Phase 7: the pure-python rendered artifacts are written even when
+    # the binary renderer dependencies are absent (the test venv may lack
+    # the [exports] extra); each file's generation_status is honest.
+    rendered = out["rendered"]
+    assert rendered["review.md"]["generation_status"] == "complete"
+    assert rendered["references.bib"]["generation_status"] == "complete"
+    assert rendered["references.csl.json"]["generation_status"] == "complete"
+    for name in ("review.pdf", "review.docx"):
+        st = rendered[name]
+        assert st["generation_status"] in ("complete", "missing")
+        if st["generation_status"] == "missing":
+            assert st["note"], "a missing renderer must carry a reason"
     # The run summary on disk reports the HONEST partial state + the
-    # deferred artifact inventory.
+    # per-file artifact inventory.
     s = json.loads(Path(out["written"]["run-summary.json"]).read_text(
         encoding="utf-8"))
     assert s["state"] == "partial"
     assert s["state"] != "completed"
     assert s["budget"]["exhausted"] is True
     types = {a["type"] for a in s["artifacts"]}
-    assert {"review.md", "review.pdf", "review.docx"} <= types
-    deferred_art = [a for a in s["artifacts"] if a.get("type") == "review.md"]
-    assert deferred_art and deferred_art[0]["generation_status"] == "missing"
-    assert "Phase 7" in deferred_art[0].get("note", "")
+    assert {"review.md", "references.bib"} <= types
+    md_art = [a for a in s["artifacts"] if a.get("type") == "review.md"]
+    assert md_art and md_art[0]["generation_status"] == "complete"
     store.close()
 
 

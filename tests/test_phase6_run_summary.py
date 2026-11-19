@@ -94,13 +94,14 @@ def test_run_summary_completed_fixture(tmp_path):
     branches = {b["provider"]: b["completeness"] for b in s["branches"]}
     assert branches["crossref"] == "complete"
     assert branches["openalex"] == "incomplete"
-    # artifact inventory: run summary present, rendered formats DEFERRED
+    # artifact inventory: run summary present. No deferred Phase-7 notes
+    # anymore (Phase 7 built the renderers); inventory entries are driven
+    # by the export's own per-file report when one is attached.
     types = {a["type"] for a in s["artifacts"]}
     assert "run_summary" in types
-    assert "review.pdf" in types
-    deferred = [a for a in s["artifacts"] if a["type"] == "review.md"]
-    assert deferred and deferred[0]["generation_status"] == "missing"
-    assert "deferred to Phase 7" in deferred[0]["note"]
+    deferred = [a for a in s["artifacts"]
+                if a.get("note") and "deferred to Phase 7" in a["note"]]
+    assert not deferred, "deferred-to-Phase-7 notes are gone in Phase 7"
     # reproducibility metadata
     assert s["reproducibility"]["search_dates"]["from"]
     assert s["reproducibility"]["software"]["package"] == "agent-papercli"
@@ -143,13 +144,16 @@ def test_structured_dumps_written(tmp_path):
     out = write_structured_dumps(store, rid, out_dir=tmp_path / "out",
                                  formats=["md", "pdf", "docx", "bib", "csl",
                                           "csv"])
+    # review.md is always available (pure python): written here.
+    assert "review.md" in out["written"]
     for name in ("evidence.json", "claims.json", "references.csl.json",
                  "papers-registry.json", "screening.json",
                  "search-log.jsonl", "evidence.csv", "screening.csv",
                  "run-summary.json"):
         assert name in out["written"], name
-    # Rendered formats are DEFERRED, structured ones written.
-    assert [d["format"] for d in out["deferred"]] == ["md", "pdf", "docx", "bib"]
+    # Phase 7: the requested formats are RENDERED (or recorded missing
+    # with a reason) -- the structured dumps + run summary are written.
+    assert "md" not in out.get("deferred", [])
     # The summary itself marks them deferred in its artifact inventory.
     s = json.loads((tmp_path / "out" / "run-summary.json").read_text(
         encoding="utf-8"))

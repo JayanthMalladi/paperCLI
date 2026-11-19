@@ -37,7 +37,7 @@ dependencies = [
 # Exporters (Phase 7 preflight will report these as available/missing).
 exports = [
     "python-docx==1.2.0",
-    "pypandoc-binary==1.14.1",
+    "pypandoc-binary==1.14",
 ]
 # JSON schema validation beyond the stdlib-structural fallback.
 schemas = [

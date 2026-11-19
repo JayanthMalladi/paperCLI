@@ -435,7 +435,7 @@ def test_review_cancel_closed_run_exits_2(tmp_path):
 # review export
 # ---------------------------------------------------------------------------
 
-def test_review_export_writes_dumps_defers_rendered(tmp_path):
+def test_review_export_writes_bundle(tmp_path):
     run_id, _ = _launch_and_wait(tmp_path, _project(tmp_path)[1])
     rc, out, err = _run_papers_env(
         "review", "export", run_id,
@@ -445,17 +445,26 @@ def test_review_export_writes_dumps_defers_rendered(tmp_path):
     _assert_envelope_shape(env)
     d = env["data"]
     written = d["written"]
-    # The Phase-6 structured dumps + run summary are written.
+    # The structured dumps + run summary are written.
     for name in ("evidence.json", "claims.json", "references.csl.json",
                  "papers-registry.json", "screening.json",
                  "search-log.jsonl", "evidence.csv", "screening.csv",
                  "run-summary.json"):
         assert name in written, f"{name} missing from the export"
-    # Rendered formats are DEFERRED (recorded, never silently missing).
-    deferred = {x["format"] for x in d["deferred"]}
-    assert {"md", "pdf", "docx"} <= deferred
-    assert all("Phase 7" in x["note"] for x in d["deferred"])
-    # run-summary.json exists on disk with the deferred inventory. The
+    # Phase 7: the requested formats are RENDERED (or recorded missing
+    # with a reason) -- no 'deferred' list remains.
+    assert "deferred" not in d, "Phase 7 built the renderers"
+    rendered = d["rendered"]
+    for name in ("review.md", "references.bib", "references.csl.json"):
+        assert rendered[name]["generation_status"] == "complete", name
+    for name in ("review.pdf", "review.docx"):
+        st = rendered[name]
+        assert st["generation_status"] in ("complete", "missing")
+        if st["generation_status"] == "missing":
+            assert st["note"], "a missing renderer must carry a reason"
+            assert any(name in w for w in env["warnings"]), \
+                "missing renderer must surface as an envelope warning"
+    # run-summary.json exists on disk with the per-file inventory. The
     # CLI (cwd=tmp_path) reports run-dir-relative paths.
     import json as _json
     summary_path = Path(written["run-summary.json"])
@@ -463,7 +472,13 @@ def test_review_export_writes_dumps_defers_rendered(tmp_path):
         summary_path = tmp_path / summary_path
     summary = _json.loads(summary_path.read_text(encoding="utf-8"))
     types = {a["type"] for a in summary["artifacts"]}
-    assert {"review.md", "review.pdf", "review.docx"} <= types
+    assert {"review.md", "references.bib", "references.csl.json",
+            "coverage-and-limitations.md", "citation-audit.json"} <= types
+    # The disclosure files are in the bundle on disk.
+    summary_parent = summary_path.parent
+    assert (summary_parent / "coverage-and-limitations.md").exists()
+    assert (summary_parent / "citation-audit.json").exists()
+    assert (summary_parent / "review.md").exists()
 
 
 def test_review_export_unknown_run_exits_2(tmp_path):

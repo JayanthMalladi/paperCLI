@@ -122,10 +122,11 @@ class PaperStore:
         with self._conn:
             self._conn.execute(
                 "INSERT INTO searches (id, run_id, provider, query, filters_json, "
-                "executed_at, cursor, result_count, completeness) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "executed_at, cursor, result_count, completeness, error) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (sid, run_id, provider, query, json.dumps(filters or {}),
-                 utc_now_iso(), cursor, result_count, completeness),
+                 utc_now_iso(), cursor, result_count, completeness,
+                 error),
             )
         return sid
 

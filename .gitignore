@@ -15,6 +15,7 @@ build/
 *.egg-info/
 .ci-venv/
 .v6/
+.v7/
 out.txt
 err.txt
 nul
@@ -23,3 +24,9 @@ nul
 research/review/scratch/
 *.log
 _debug*
+
+# Phase 7 scratch (never commit)
+_main_full*
+_p7_*
+_mcp_*
+_miktex_warm.*

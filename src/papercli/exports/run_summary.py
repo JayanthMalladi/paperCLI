@@ -182,7 +182,7 @@ def _branches_block(store: PaperStore, run_id: str) -> list[dict[str, Any]]:
     out = []
     for r in rows:
         f = json.loads(r.get("filters_json") or "{}")
-        out.append({
+        entry = {
             "id": r["id"],
             "provider": r.get("provider"),
             "kind": f.get("kind", "search"),
@@ -190,7 +190,10 @@ def _branches_block(store: PaperStore, run_id: str) -> list[dict[str, Any]]:
             "result_count": r.get("result_count"),
             "completeness": r.get("completeness"),
             "executed_at": r.get("executed_at"),
-        })
+        }
+        if r.get("error"):
+            entry["error"] = r["error"]
+        out.append(entry)
     return out
 
 
@@ -269,8 +272,11 @@ def build_run_summary(store: PaperStore, run_id: str,
                       requested_formats: list[str] | None = None) -> dict[str, Any]:
     """Build the run-summary.json body for ``run_id``.
 
-    ``requested_formats`` (from ``papers review export``) add DEFERRED
-    entries to the artifact inventory for the Phase-7 rendered formats.
+    The artifact inventory carries the recorded artifact rows + every
+    bundle file the export orchestration reported (written, or missing
+    with an explicit reason -- spec section 14). ``requested_formats``
+    remains an accepted parameter for the CLI surface; inventory entries
+    are driven by the export's own report, never a guess.
     """
     row = store.run_row(run_id)
     if row is None:
@@ -327,7 +333,12 @@ def build_run_summary(store: PaperStore, run_id: str,
                  "here -- never silently absorbed"),
     }
 
-    # Artifact inventory: stored artifact rows + the Phase-6 status outputs.
+    # Artifact inventory: stored artifact rows + the run-summary itself +
+    # the explicit statuses of every bundle file produced by the export
+    # (``exported_artifacts`` -- set by the Phase-7 export orchestration;
+    # without it the inventory carries only the recorded artifact rows).
+    # No format is ever silently missing: a renderer that cannot run is
+    # recorded missing WITH a reason (spec section 14).
     artifacts = []
     for a in store._conn.execute(
             "SELECT * FROM artifacts WHERE run_id=? ORDER BY id",
@@ -339,31 +350,38 @@ def build_run_summary(store: PaperStore, run_id: str,
             "run_revision": a.get("run_revision"),
             "generation_status": a.get("generation_status") or "missing",
         })
-    summary_path = run_dir(store, run_id) / "run-summary.json"
+    base_dir = run_dir(store, run_id)
+    summary_path = base_dir / "run-summary.json"
     artifacts.append({
         "type": "run_summary",
         "path": str(summary_path),
         "hash": None,
         "generation_status": "complete" if row["state"] in ("completed",) else "partial",
     })
-    if requested_formats:
-        # Every requested rendered/bibliographic format is accounted for:
-        # written (the structured dumps) or explicitly deferred -- never
-        # silently missing (spec section 14). bib is rendered from the
-        # CSL-JSON registry by the Phase-7 BibTeX exporter.
-        RENDERED = ("md", "pdf", "docx", "bib")
-        for fmt in requested_formats:
-            if fmt in RENDERED:
-                fname = "references.bib" if fmt == "bib" else f"review.{fmt}"
-                artifacts.append({
-                    "type": fname,
-                    "path": str(run_dir(store, run_id) / fname),
+    exported = getattr(store, "_phase7_exported_artifacts", None)
+    if exported:
+        # The export orchestration records each spec-14 file it wrote or
+        # explicitly marked missing (renderers with a missing dependency
+        # never destroy the others -- spec section 14).
+        for name, status in exported.items():
+            if isinstance(status, Mapping):
+                entry = {
+                    "type": name,
+                    "path": status.get("path"),
                     "hash": None,
-                    "generation_status": "missing",
-                    "note": "deferred to Phase 7 (rendered exporters not "
-                            "built yet); the canonical structured draft + "
-                            "evidence registry are available (Phase 6)",
-                })
+                    "generation_status": status.get("generation_status")
+                                         or "missing",
+                }
+                if status.get("note"):
+                    entry["note"] = status["note"]
+            else:
+                entry = {
+                    "type": name,
+                    "path": str(base_dir / name),
+                    "hash": None,
+                    "generation_status": str(status),
+                }
+            artifacts.append(entry)
 
     summary: dict[str, Any] = {
         "schema_version": "1.0",
@@ -395,8 +413,10 @@ def build_run_summary(store: PaperStore, run_id: str,
         "notes": [
             "a failed or partial run is reported as such, never "
             "'completed' (spec section 6)",
-            "rendered exports (md/pdf/docx) are produced by Phase 7; "
-            "structured dumps + this summary are Phase 6",
+            "one canonical structured draft/evidence registry feeds "
+            "every renderer; a renderer failure marks only its own "
+            "artifact missing, with a reason -- the Markdown, evidence, "
+            "and reference files are never destroyed (spec section 14)",
         ],
     }
     return summary
@@ -425,14 +445,25 @@ def write_run_summary(store: PaperStore, run_id: str,
 
 def write_structured_dumps(store: PaperStore, run_id: str,
                            out_dir: Path | str | None = None,
-                           formats: list[str] | None = None) -> dict[str, Any]:
-    """The Phase-6 export surface: canonical structured dumps.
+                           formats: list[str] | None = None,
+                           renderer_env: Any | None = None) -> dict[str, Any]:
+    """The export surface: canonical structured dumps + the Phase-7
+    rendered bundle.
 
-    What Phase 7 renders from: ``evidence.json``, ``claims.json``,
+    Structured dumps (``evidence.json``, ``claims.json``,
     ``papers-registry.json``, ``screening.json``, ``search-log.jsonl``,
-    ``references.csl.json``, ``evidence.csv``, ``screening.csv``,
-    ``run-summary.json``. Rendered md/pdf/docx are DEFERRED (recorded in
-    the summary, not silently missing).
+    ``evidence.csv``, ``screening.csv``, ``run-summary.json``) + the
+    rendered formats (``review.md``, ``references.bib``,
+    ``references.csl.json``, ``review.pdf``, ``review.docx``), the
+    disclosure files (``coverage-and-limitations.md``,
+    ``citation-audit.json``), and the honest per-file artifact inventory
+    (a missing renderer is recorded with a reason -- never a silent
+    missing "completed" artifact, spec section 14).
+
+    ``renderer_env`` (optional) is the preflight result handed to the
+    Phase-7 renderers; None -> preflight this process
+    (``make_renderer_env``). Tests use a bare env to stay
+    deterministic; the CLI passes the real one.
     """
     base = Path(out_dir) if out_dir else run_dir(store, run_id)
     base.mkdir(parents=True, exist_ok=True)
@@ -449,9 +480,8 @@ def write_structured_dumps(store: PaperStore, run_id: str,
                            "records": store.evidence_for_run(run_id)})
     dump("claims.json", {"run_id": run_id,
                          "claims": store.claims_for_run(run_id)})
-    from papercli.reasoning.common import bibliography_for_run
-    dump("references.csl.json",
-         {"run_id": run_id, "registry": bibliography_for_run(store, run_id)})
+    from papercli.exports.renderers import build_references_csl
+    dump("references.csl.json", build_references_csl(store, run_id))
     dump("papers-registry.json",
          {"run_id": run_id, "papers": store.papers_for_run(run_id)})
     screenings = store.screenings_for_run(run_id)
@@ -475,6 +505,7 @@ def write_structured_dumps(store: PaperStore, run_id: str,
                     "cursor": s.get("cursor"),
                     "result_count": s.get("result_count"),
                     "completeness": s.get("completeness"),
+                    "error": s.get("error"),
                 },
                 "warnings": [],
             },
@@ -507,19 +538,34 @@ def write_structured_dumps(store: PaperStore, run_id: str,
     written["evidence.csv"] = str(base / "evidence.csv")
     written["screening.csv"] = str(base / "screening.csv")
 
-    requested = list(formats or [])
-    summary = build_run_summary(store, run_id, requested_formats=requested)
-    p = write_run_summary(store, run_id, summary, base / "run-summary.json")
-    written["run-summary.json"] = str(p)
+    requested = [f.strip().lower() for f in (formats or []) if f.strip()]
 
-    deferred = [f for f in requested if f in ("md", "pdf", "docx", "bib")]
+    # Phase 7: render the requested formats from the canonical review.md +
+    # registry. A renderer whose dependency is missing marks ONLY its own
+    # artifact missing, with an explicit reason (spec section 14: no
+    # silent missing "completed" artifacts).
+    from papercli.exports import renderers
+    rendered = renderers.export_bundle(
+        store, run_id, out_dir=base,
+        formats=["md", "pdf", "docx", "bib", "csl", "csv"]
+        if not requested else requested,
+        env=renderer_env)
+    for name, status in rendered.items():
+        if name not in written and status["generation_status"] == "complete":
+            written[name] = status["path"]
+    # The export's per-file statuses feed the run-summary artifact
+    # inventory (written files + missing-with-reason renderers).
+    structured_names = set(written)
+    store._phase7_exported_artifacts = {
+        name: status for name, status in rendered.items()
+    } | {name: {"path": written[name], "generation_status": "complete"}
+         for name in structured_names}
+    summary = build_run_summary(store, run_id, requested_formats=requested)
+    sp = write_run_summary(store, run_id, summary, base / "run-summary.json")
+    written["run-summary.json"] = str(sp)
     return {
         "run_id": run_id,
         "written": written,
-        "deferred": [
-            {"format": f,
-             "note": "rendered exporter deferred to Phase 7; the "
-                     "canonical structured dump above is its source"}
-            for f in deferred],
+        "rendered": rendered,
         "state": row.get("state") if row else None,
     }

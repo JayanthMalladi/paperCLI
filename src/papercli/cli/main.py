@@ -971,13 +971,18 @@ def _cmd_review_cancel(args: argparse.Namespace) -> None:
 def _cmd_review_export(args: argparse.Namespace) -> None:
     """``papers review export RUN_ID --formats md,pdf,docx,bib,csl,csv``.
 
-    Runs the Phase-6 export surface (structured dumps + run summary).
-    Rendered md/pdf/docx are recorded as DEFERRED to Phase 7 in the
-    artifact inventory -- never silently missing. Exit 0 on success;
-    exit 6 when the run itself is partial (its summary is still
-    written)."""
-    from papercli.exports.run_summary import (
-        build_run_summary, write_structured_dumps, write_run_summary)
+    Writes the full spec-14 output bundle: the canonical structured
+    dumps, the rendered review.md + references.bib + references.csl.json,
+    the binary renders (review.pdf / review.docx from the SAME canonical
+    review.md), and the disclosure files (coverage-and-limitations.md,
+    citation-audit.json). Every renderer PREFLIGHTS its own dependency;
+    a renderer whose dependency is absent records its OWN artifact
+    generation_status=missing with an explicit reason in the run summary
+    and an envelope warning -- the Markdown / BibTeX / CSL / CSV files
+    are never destroyed or blocked (spec sections 14/16). Exit 0 when
+    the bundle was written; a partial RUN is still exported honestly
+    (its state is reported in the envelope data, never dropped)."""
+    from papercli.exports.run_summary import write_structured_dumps
     from papercli.storage.db import PaperStore
 
     formats = [f for f in (getattr(args, "formats", None) or
@@ -992,16 +997,22 @@ def _cmd_review_export(args: argparse.Namespace) -> None:
         out = write_structured_dumps(store, args.run_id,
                                      formats=formats)
         state = str(row.get("state") or out.get("state"))
-        # The COMMAND succeeded (the bundle was written): exit 0. The
-        # run's own state (which may be partial/failed) is reported in the
-        # envelope data, never silently dropped (spec section 6).
+        # Honesty (spec section 14): a renderer that cannot run is a
+        # WARNING on an otherwise successful command, never a silent
+        # missing "completed" artifact.
+        warnings = []
+        rendered = out.get("rendered") or {}
+        for name, st in rendered.items():
+            if st.get("generation_status") == "missing":
+                warnings.append(
+                    f"{name} was not generated: {st.get('note') or 'renderer unavailable'}")
         env = ok(data={
             "run_id": args.run_id,
             "state": state,
             "written": out.get("written"),
-            "deferred": out.get("deferred"),
+            "rendered": rendered,
             "formats_requested": formats,
-        })
+        }, warnings=warnings)
         emit(env)
 
 
