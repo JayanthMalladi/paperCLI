@@ -175,8 +175,6 @@ class ModelAdapter:
         self.budget = budget or ModelBudget()
         self.on_record = on_record
         self.max_re_prompts = max_re_prompts
-        #: D-P5-1: last reconcile's deficit flag -- billed, never absorbed.
-        self.last_budget_deficit = False
         import time as _time
         self._sleep = sleep_fn if sleep_fn is not None else _time.sleep
         # The capability probe runs once against a REAL, self-owned client.
