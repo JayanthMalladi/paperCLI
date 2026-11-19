@@ -1,0 +1,35 @@
+# Phase 8 pilot brief — robotics domain (cleaned from the user's research
+# question; dashes normalized). Budget values are the agreed guardrails,
+# not promised throughput. Robotics, not biomedical: no PubMed/PMC;
+# S2 keyless enrichment is on with graceful degrade.
+schema_version: '1.0'
+question: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF arms that grasp and reorient objects with suction, and the whole behaviour has so far been validated in simulation. Is the proposed actuation - backdrivable (series-elastic) actuators on most joints plus a counterbalance spring at the shoulder - supported by published practice for this class of robot? And when such a system moves from simulation to hardware, which parts of the demonstrated performance (localisation accuracy, force behaviour of the two-handed grip, power draw) can be expected to carry over, and which are known to degrade, per the literature?'
+purpose: 'Thesis background and research-gap identification'
+review_type: narrative
+scope: 'Robotics: mobile manipulators, dexterous two-arm systems with suction grasping, actuator selection (backdrivable / series-elastic), sim-to-hardware transfer; English, 2015 onward, preprints included'
+date_range: {from: null, to: null}
+languages: [en]
+include_preprints: true
+seed_identifiers: []
+inclusion_criteria:
+  - 'published practice on mobile manipulators or two-arm dexterous robots with suction or compliant actuation'
+  - 'sim-to-hardware / sim-to-real transfer results with measured performance deltas'
+exclusion_criteria:
+  - 'single fixed-base arms with no wheeled base'
+  - 'pure opinion/commentary without original data'
+themes_to_investigate:
+  - 'backdrivable and series-elastic actuation on mobile manipulators'
+  - 'counterbalance springs at the shoulder joint'
+  - 'suction-based two-handed grasping and reorientation'
+  - 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour, power draw'
+outputs: [md, pdf, docx, bib, csl, csv]
+citation_style: ieee
+limits:
+  wall_minutes: 360
+  max_search_queries: 30
+  max_discovered_records: 1000
+  max_full_text_papers: 60
+  max_model_calls: 300
+  max_input_tokens: 1000000
+  max_output_tokens: 150000
+  max_estimated_cost_usd: null

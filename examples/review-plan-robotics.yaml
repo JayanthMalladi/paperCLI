@@ -1,0 +1,250 @@
+schema_version: '1.0'
+question: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF
+  arms that grasp and reorient objects with suction, and the whole behaviour has so
+  far been validated in simulation. Is the proposed actuation - backdrivable (series-elastic)
+  actuators on most joints plus a counterbalance spring at the shoulder - supported
+  by published practice for this class of robot? And when such a system moves from
+  simulation to hardware, which parts of the demonstrated performance (localisation
+  accuracy, force behaviour of the two-handed grip, power draw) can be expected to
+  carry over, and which are known to degrade, per the literature?'
+purpose: Thesis background and research-gap identification
+review_type: narrative
+scope: 'Robotics: mobile manipulators, dexterous two-arm systems with suction grasping,
+  actuator selection (backdrivable / series-elastic), sim-to-hardware transfer; English,
+  2015 onward, preprints included'
+date_range:
+  from: null
+  to: null
+languages:
+- en
+include_preprints: true
+seed_identifiers: []
+inclusion_criteria:
+- published practice on mobile manipulators or two-arm dexterous robots with suction
+  or compliant actuation
+- sim-to-hardware / sim-to-real transfer results with measured performance deltas
+exclusion_criteria:
+- single fixed-base arms with no wheeled base
+- pure opinion/commentary without original data
+themes_to_investigate:
+- backdrivable and series-elastic actuation on mobile manipulators
+- counterbalance springs at the shoulder joint
+- suction-based two-handed grasping and reorientation
+- 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour, power
+  draw'
+outputs:
+- md
+- pdf
+- docx
+- bib
+- csl
+- csv
+citation_style: ieee
+queries:
+- provider: crossref
+  query: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF
+    arms that grasp and reorient objects with suction, and the whole behaviour has
+    so far been validated in simulation. Is the proposed actuation - backdrivable
+    (series-elastic) actuators on most joints plus a counterbalance spring at the
+    shoulder - supported by published practice for this class of robot? And when such
+    a system moves from simulation to hardware, which parts of the demonstrated performance
+    (localisation accuracy, force behaviour of the two-handed grip, power draw) can
+    be expected to carry over, and which are known to degrade, per the literature?'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: openalex
+  query: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF
+    arms that grasp and reorient objects with suction, and the whole behaviour has
+    so far been validated in simulation. Is the proposed actuation - backdrivable
+    (series-elastic) actuators on most joints plus a counterbalance spring at the
+    shoulder - supported by published practice for this class of robot? And when such
+    a system moves from simulation to hardware, which parts of the demonstrated performance
+    (localisation accuracy, force behaviour of the two-handed grip, power draw) can
+    be expected to carry over, and which are known to degrade, per the literature?'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: arxiv
+  query: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF
+    arms that grasp and reorient objects with suction, and the whole behaviour has
+    so far been validated in simulation. Is the proposed actuation - backdrivable
+    (series-elastic) actuators on most joints plus a counterbalance spring at the
+    shoulder - supported by published practice for this class of robot? And when such
+    a system moves from simulation to hardware, which parts of the demonstrated performance
+    (localisation accuracy, force behaviour of the two-handed grip, power draw) can
+    be expected to carry over, and which are known to degrade, per the literature?'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: s2
+  query: 'A mobile manipulator is being designed: a wheeled base carries two 7-DOF
+    arms that grasp and reorient objects with suction, and the whole behaviour has
+    so far been validated in simulation. Is the proposed actuation - backdrivable
+    (series-elastic) actuators on most joints plus a counterbalance spring at the
+    shoulder - supported by published practice for this class of robot? And when such
+    a system moves from simulation to hardware, which parts of the demonstrated performance
+    (localisation accuracy, force behaviour of the two-handed grip, power draw) can
+    be expected to carry over, and which are known to degrade, per the literature?'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: crossref
+  query: backdrivable and series-elastic actuation on mobile manipulators
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: openalex
+  query: backdrivable and series-elastic actuation on mobile manipulators
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: arxiv
+  query: backdrivable and series-elastic actuation on mobile manipulators
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: s2
+  query: backdrivable and series-elastic actuation on mobile manipulators
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: crossref
+  query: counterbalance springs at the shoulder joint
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: openalex
+  query: counterbalance springs at the shoulder joint
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: arxiv
+  query: counterbalance springs at the shoulder joint
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: s2
+  query: counterbalance springs at the shoulder joint
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: crossref
+  query: suction-based two-handed grasping and reorientation
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: openalex
+  query: suction-based two-handed grasping and reorientation
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: arxiv
+  query: suction-based two-handed grasping and reorientation
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: s2
+  query: suction-based two-handed grasping and reorientation
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: crossref
+  query: 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour,
+    power draw'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: openalex
+  query: 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour,
+    power draw'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: arxiv
+  query: 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour,
+    power draw'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+- provider: s2
+  query: 'sim-to-hardware transfer: localisation accuracy, two-handed force behaviour,
+    power draw'
+  filters: {}
+  include_preprints: true
+  date_range:
+    from: null
+    to: null
+resource_estimate:
+  expected_queries: 20
+  expected_records: 1000
+  full_text_cap: 60
+  records_ceiling: 1000
+  wall_ceiling_minutes: 360
+  model_call_ceiling: 300
+  input_token_ceiling: 1000000
+  output_token_ceiling: 150000
+  cost_ceiling_usd: null
+  note: Estimates only -- ceilings are not promised throughput (spec section 7).
+assumptions:
+- no seed identifiers supplied; discovery starts from free-text queries only
+- no date range; full history is searched (coverage may be lower than a bounded window)
+ambiguities: []
+expected_coverage: 20 planned query variant(s) across providers ['arxiv', 'crossref',
+  'openalex', 's2']; estimates only, not promised coverage
+defaults_applied: []
+limits:
+  wall_minutes: 360
+  max_search_queries: 30
+  max_discovered_records: 1000
+  max_full_text_papers: 60
+  max_model_calls: 300
+  max_input_tokens: 1000000
+  max_output_tokens: 150000
+  max_estimated_cost_usd: null
+seed_identifiers_checked: []
+protocol_hash: c10220eb45e765665b20e2b7052be94550ab4e297a9b004ffa73afbde3cc7fbd
+plan_id: plan-f601e32b-d844-4ce0-bcb1-676cd5eb5a8b
+brief_ref:
+  path: D:\prime-agent-harness\paperCLI\examples\brief-robotics.yaml
+  sha256: 8542bc4db2a0063c
+  run_id: run-7dee3084-32ce-4f5f-b4e5-d09bceccf14f
+config_snapshot_ref: config-snapshots/config-7665e8caa56a71fa.json

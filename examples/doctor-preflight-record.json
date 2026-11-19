@@ -1,0 +1,155 @@
+{
+  "schema_version": "1.0",
+  "status": "ok",
+  "data": {
+    "checks": [
+      {
+        "name": "config_syntax",
+        "status": "pass",
+        "message": "Config loaded and merged.",
+        "details": {
+          "sources": [
+            "defaults",
+            "project:<project-dir>\\.papercli\\config.toml"
+          ],
+          "top_sections": [
+            "contact",
+            "execution",
+            "limits",
+            "model",
+            "network",
+            "providers",
+            "retrieval"
+          ]
+        }
+      },
+      {
+        "name": "contact_email",
+        "status": "pass",
+        "message": "contact.email is configured.",
+        "details": {
+          "configured": true
+        }
+      },
+      {
+        "name": "provider_credentials",
+        "status": "pass",
+        "message": "Provider credential readiness.",
+        "details": {
+          "unpaywall": {
+            "enabled": true,
+            "env_ref": "PAPERS_EMAIL",
+            "present": true,
+            "status": "pass",
+            "message": "Credential present."
+          },
+          "crossref": {
+            "enabled": true,
+            "env_ref": null,
+            "present": true,
+            "status": "pass",
+            "message": "Credential present."
+          },
+          "openalex": {
+            "enabled": true,
+            "env_ref": "OPENALEX_API_KEY",
+            "present": true,
+            "status": "pass",
+            "message": "Credential present."
+          },
+          "arxiv": {
+            "enabled": true,
+            "env_ref": null,
+            "present": true,
+            "status": "pass",
+            "message": "Credential present."
+          },
+          "semantic_scholar": {
+            "enabled": true,
+            "env_ref": "SEMANTIC_SCHOLAR_API_KEY",
+            "present": false,
+            "status": "warn",
+            "message": "Optional credential (SEMANTIC_SCHOLAR_API_KEY) not set; provider works keyless with a smaller daily budget."
+          }
+        }
+      },
+      {
+        "name": "model_endpoint",
+        "status": "pass",
+        "message": "Model endpoint reachable (HTTP 200).",
+        "details": {
+          "configured": true,
+          "network_checked": true,
+          "key_present": true,
+          "http_status": 200,
+          "adapter": "openai_compatible"
+        }
+      },
+      {
+        "name": "writable_storage",
+        "status": "pass",
+        "message": "Storage dir is writable: <project-dir>\\.papercli\\storage",
+        "details": {
+          "path": "<project-dir>\\.papercli\\storage",
+          "writable": true
+        }
+      },
+      {
+        "name": "db_migrations",
+        "status": "pass",
+        "message": "Applied 0 migration(s); 8 bundled total.",
+        "details": {
+          "db_path": "<project-dir>\\.papercli\\storage\\papercli.db",
+          "applied": [],
+          "bundled": 8
+        }
+      },
+      {
+        "name": "exporter_deps",
+        "status": "pass",
+        "message": "Exporter dependency availability.",
+        "details": {
+          "md": {
+            "available": true,
+            "module": null,
+            "status": "pass"
+          },
+          "bib": {
+            "available": true,
+            "module": null,
+            "status": "pass"
+          },
+          "csl": {
+            "available": true,
+            "module": null,
+            "status": "pass"
+          },
+          "csv": {
+            "available": true,
+            "module": null,
+            "status": "pass"
+          },
+          "pdf": {
+            "available": true,
+            "module": "pypandoc",
+            "status": "pass"
+          },
+          "docx": {
+            "available": true,
+            "module": "docx",
+            "status": "pass"
+          }
+        }
+      }
+    ],
+    "summary": {
+      "total": 7,
+      "passed": 7,
+      "warnings": 0,
+      "failed": 0,
+      "healthy": true
+    },
+    "schema_version": "1.0"
+  },
+  "warnings": []
+}
