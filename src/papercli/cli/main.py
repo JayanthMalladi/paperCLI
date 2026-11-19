@@ -76,7 +76,9 @@ _NOT_IMPL: dict[str, dict] = {
     # the entry is kept only so help text stays available if re-versioned.
     "citations audit": {"phase": "Phase 5 (live)", "desc": "Run citation and claim-support audit",
                         "pos": [], "opt": ["--run"]},
-    "skill export": {"phase": "Phase 7", "desc": "Export the portable agent skill folder",
+    # "skill export" is live since Phase 7 (excluded via _implemented_cmds);
+    # the entry is kept only so help text stays available if re-versioned.
+    "skill export": {"phase": "Phase 7 (live)", "desc": "Export the portable agent skill folder",
                      "pos": [], "opt": ["--out"]},
 }
 
@@ -257,6 +259,33 @@ def _cmd_schema(args: argparse.Namespace) -> None:
 def _validate_generic(data: Any, schema_name: str) -> list[str]:
     from papercli.agent_contract.schemas import validate as _validate
     return _validate(data, schema_name, full=True)
+
+
+def _cmd_skill_export(args: argparse.Namespace) -> None:
+    """``papers skill export --out DIR``: write the portable agent
+    skill (Phase 7, spec section 15).
+
+    Produces a standard SKILL.md (front matter + short workflow +
+    command discovery via `papers schema` + config/preflight + result
+    interpretation + examples: subprocess arg arrays, inspect status,
+    respect budgets, candidate identity, untrusted documents, no
+    completion-claims-from-launch; no browser control) + the
+    supporting references (schemas, evidence rules, recovery/resume,
+    MCP). Exporting the folder does NOT install it anywhere --
+    installation into an agent is explicit."""
+    from papercli.skill.export import export_skill
+    from pathlib import Path as _P
+
+    out_dir = _P(args.out) if getattr(args, "out", None) else _P("papercli-skill")
+    written = export_skill(out_dir)
+    env = ok(data={
+        "out_dir": str(out_dir),
+        "files": written,
+        "note": "exported, not installed: installation into an agent "
+                "is explicit (spec section 15); the SKILL.md tells the "
+                "agent to discover commands via `papers schema`",
+    })
+    emit(env)
 
 
 def _cmd_mcp_serve(args: argparse.Namespace) -> None:
@@ -1315,7 +1344,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "evidence list", "citations audit",
                          "review run", "review status", "review logs",
                          "review resume", "review cancel",
-                         "review export"}
+                         "review export", "skill export"}
 
     review_sub = _ensure_group("review", "Group: review (research pipeline)")
     task_sub = _ensure_group("task", "Group: task (lease-based task protocol)")
@@ -1402,6 +1431,17 @@ def build_parser() -> argparse.ArgumentParser:
         "audit", help="Run citation + claim-support audit (JSON envelope).")
     p_caudit.add_argument("--run", required=True, help="Run id.")
     p_caudit.set_defaults(func=_cmd_citations_audit)
+
+    # Phase 7: the portable agent skill export (replaces the Phase-1
+    # stub; the stub loop skips implemented commands).
+    skill_sub = _ensure_group("skill", "Group: skill (portable agent skill)")
+    p_skill = skill_sub.add_parser(
+        "export",
+        help="Export the portable agent skill folder (SKILL.md + "
+             "references). Exporting does not install it.")
+    p_skill.add_argument("--out", default="papercli-skill",
+                         help="Output dir (default: ./papercli-skill).")
+    p_skill.set_defaults(func=_cmd_skill_export)
 
     # All remaining NOT_IMPLEMENTED commands, declared from the _NOT_IMPL table.
     for cmd, spec in _NOT_IMPL.items():

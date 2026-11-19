@@ -58,28 +58,43 @@ def test_config_show_exits_0(tmp_project):
 #: search/resolve/fetch into live provider commands, so they no longer
 #: belong here (their offline behavior is covered in the provider tests).
 _STUB_COMMANDS = [
-    # Phase 3 implemented "read" and "ingest" (see test_phase3_*.py);
-    # Phase 4 implemented "review plan", "task next", "task submit", and
-    # "evidence list" (wired into live commands -- their offline behavior is
-    # covered in test_phase4_research.py), so they no longer belong here.
-    # Phase 5 implemented "citations audit" (live; covered in
-    # test_phase5_citations.py), so it no longer belongs here either.
-    # Phase 6 implemented the review lifecycle commands (run/status/logs/
-    # resume/cancel/export -- covered in test_phase6_cli_review.py), so they
-    # no longer belong here. Only the Phase-7 skill export remains a stub.
-    ["skill", "export", "--out", "./papercli-skill"],
+    # No contract command is a stub anymore (Phases 1-7). The list is
+    # kept (empty) so the test stays the guard that a NEW documented
+    # command is wired live or returns a NOT_IMPLEMENTED envelope -- a
+    # command that exits 0 while still a stub is caught here.
+    # Phase 3: "read" + "ingest"; Phase 4: "review plan" / "task
+    # next" / "task submit" / "evidence list"; Phase 5: "citations
+    # audit"; Phase 6: the review lifecycle; Phase 7: "skill export"
+    # + "mcp serve" (all live; covered in their phase test files).
 ]
 
 
-def test_stub_commands_exit_2_with_envelope(tmp_project):
+def test_no_stub_commands_remain(tmp_project):
+    """Every documented contract command is live (Phases 1-7): none of
+    them may exit 2 with a NOT_IMPLEMENTED envelope anymore."""
+    assert _STUB_COMMANDS == [], _STUB_COMMANDS
+    # The last stub (Phase 7 skill export) now exits 0 with an ok
+    # envelope (the folder is written; nothing is installed).
+    rc, out, _ = run_papers("skill", "export", "--out",
+                            "./papercli-skill", cwd=tmp_project)
+    assert rc == 0
+    env = json.loads(out.strip().splitlines()[-1])
+    assert env["status"] == "ok"
+    assert "SKILL.md" in env["data"]["files"]
+
+
+def test_former_stub_commands_exit_2_with_envelope(tmp_project):
+    """(Kept for the contract: any command that is STILL a stub must
+    exit 2 with a well-formed NOT_IMPLEMENTED envelope, and a bare
+    group must exit 2 with MISSING_SUBCOMMAND.)"""
     for args in _STUB_COMMANDS:
         rc, out, _ = run_papers(*args, cwd=tmp_project)
         assert rc == 2, f"{args} exited {rc}, expected 2"
         env = json.loads(out)
         assert env["status"] == "error"
         assert env["error"]["code"] == "NOT_IMPLEMENTED"
-        # command path = first token, or first two tokens for a group command
-        group_commands = {"review", "task", "evidence", "citations", "skill"}
+        group_commands = {"review", "task", "evidence", "citations",
+                          "skill", "mcp"}
         expected_cmd = " ".join(args[:2]) if args[0] in group_commands else args[0]
         assert env["error"]["details"]["command"] == expected_cmd
         assert env["schema_version"] == "1.0"

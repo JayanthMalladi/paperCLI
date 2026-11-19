@@ -58,7 +58,7 @@ papers schema
 
 ## Command surface
 
-Implemented in Phase 1:
+Everything in the full contract is implemented (Phases 1–7):
 
 | Command | Status |
 |---|---|
@@ -72,6 +72,12 @@ Implemented in Phase 1:
 | `papers read FILE --pages 1-3 --max-chars 18000` | implemented (Phase 3) |
 | `papers ingest FILE --run RUN_ID` | implemented (Phase 3, wrong-paper guarded) |
 | `papers version`, `papers --help` | implemented (human-readable exceptions) |
+| `papers review plan / run / status / logs / resume / cancel / export` | implemented (Phase 4 plan; Phase 6 lifecycle; Phase 7 export) |
+| `papers task next / submit` | implemented (Phase 4 lease protocol; Phase 6 CLI) |
+| `papers evidence list` | implemented (Phase 4) |
+| `papers citations audit` | implemented (Phase 5) |
+| `papers skill export --out DIR` | implemented (Phase 7) |
+| `papers mcp serve` | implemented (Phase 7, stdio MCP server) |
 
 The full contract (all commands exist and are parseable; `skill export`
 is implemented in Phase 7; see "What is implemented vs not" for the
@@ -186,7 +192,7 @@ max_output_tokens 150000 · max_estimated_cost_usd null`. These are example
 ceilings, not promised throughput or cost. A null monetary cap is only
 valid with hard token/call limits set.
 
-## What is implemented vs not (Phases 1–2, honestly)
+## What is implemented vs not (Phases 1–7, honestly)
 
 **Implemented**
 - `init`, `config show --redact`, `doctor --json`, `schema`, `version`,
@@ -241,16 +247,71 @@ valid with hard token/call limits set.
   and full-output secret redaction.
 - pytest suite + CI (clean-venv install, `pytest`, secret-scan).
 
-**Not yet implemented (later phases)**
-- Research pipeline: protocol generation, screening, extraction,
-  synthesis, citation audit (`papers review …`, `evidence list`,
-  `citations audit`).
-- The tested OpenAI-compatible model adapter and budgets.
-- Detached worker, locks/leases (runtime), status, cancellation, resume.
-- `papers task next/submit` external-agent surface (the lease protocol
-  itself is in place in `papercli.jobs`; the CLI wiring is Phase 6).
-- Exporters (md/pdf/docx/bib/csl/csv).
-- Portable agent skill.
+
+**Phase 4 – research pipeline** (deterministic core)
+- Protocol generation from a validated brief, query expansion,
+  screening, and the deterministic layers (discovery → dedup →
+  screening → expansion).
+- Durable task DAG + lease-based queue shared by standalone workers
+  and external agents (idempotent by task type + input hash +
+  protocol revision).
+
+**Phase 5 – model-driven reasoning + citations**
+- An OpenAI-compatible model adapter with a shared model budget +
+  rate limiter (reservations before dispatch; a deficit is
+  disclosed, never silently absorbed).
+- Screening of uncertain records, finding extraction, theme-organized
+  synthesis, and bounded critique: every claim carries evidence ids +
+  registry citation keys; the model may SELECT references but cannot
+  invent bibliography entries (registry-only, spec 10).
+- `papers citations audit`: deterministic claim-support + reference-
+  identity checks (key validation, duplicates, orphans, wrong-paper
+  verdicts, correction/retraction metadata availability WITH its
+  limits).
+
+**Phase 6 – the detached worker + run lifecycle**
+- `papers review run --detach`: a process-independent worker (durable
+  handshake + heartbeat, never a PID check), lock-guarded single
+  writer, checkpoint after every task.
+- `status` / `logs [--follow]` / `resume [--detach]` / `cancel`:
+  explicit recovery, a changed-brief check, and a cancel that writes
+  the checkpoint + partial bundle.
+- The Phase-6 status surface: `run-summary.json` builder (honest
+  state / limits / usage / counts / budget / failures / artifact
+  inventory / reproducibility metadata) and the export bundle surface.
+
+**Phase 7 – MCP + export + skill + docs**
+- The rendered exporters: `review.md` (canonical narrative review),
+  `references.bib` + `references.csl.json` (registry-only, no
+  drift), `review.pdf` + `review.docx` (from the SAME review.md; a
+  missing renderer dependency is recorded `missing` WITH a reason,
+  never silent), plus `coverage-and-limitations.md` +
+  `citation-audit.json` (spec 14).
+- `papers mcp serve`: a stdio MCP server wrapping the CLI commands
+  1:1 (the tool surface IS the CLI contract; results are the CLI
+  envelopes).
+- `papers skill export --out DIR`: the portable agent skill
+  (SKILL.md + references; exporting does not install it).
+- The user guide: install → run → read the bundle → connect an agent
+  (`docs/05-user-guide.md`), the MCP connection guide
+  (`docs/04-mcp-connection.md`), and the honest limitations above.
+
+**Not yet implemented / out of scope (spec section 2)**
+- Browser automation, paywall bypass (Sci-Hub), CAPTCHA solving, and
+  code execution of content found in papers (spec section 16: never
+  in scope).
+- External notifications / webhooks (disabled by default; no built-in
+  path).
+- Automatic meta-analysis / statistical synthesis; the pipeline
+  produces an evidence-linked narrative/systematic-style review, not
+  pooled estimates.
+- A universal exhaustive-coverage guarantee (spec section 19: an
+  honest count of what was found, never a claim that all relevant
+  papers were found).
+- Web dashboard; the machine contract is the output bundle + the MCP
+  server.
+- GUI / interactive TUI; the CLI is machine-first (one JSON envelope
+  per command).
 
 ## Live provider smoke tests
 
