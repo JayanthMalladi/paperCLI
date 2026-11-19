@@ -342,6 +342,12 @@ The Phase-8 pilot brief + plan are committed under `examples/`
    (watch it; recover it in the morning if it stalled or the host rebooted)
 4. `papers review export <RUN_ID> --formats md,pdf,docx,bib,csl,csv`
 
+> **Host requirement (spec 4/12):** keep the host **awake, powered, and
+> network-connected** for the whole detached run — the worker checkpoints to
+> disk but a sleeping/offline host stalls it, and a reboot is recovered only
+> by an explicit `papers review resume <RUN_ID> --detach` (never automatic).
+> Full details are in `RELEASE.md` (§ host requirements).
+
 The committed plan maps to Run `run-7dee3084-32ce-4f5f-b4e5-d09bceccf14f`
 (protocol hash `c10220eb45e76566…`, state `planned`): 20 planned query
 variants across arxiv/crossref/openalex/s2, expected record volume 1000,
