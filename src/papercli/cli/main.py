@@ -259,6 +259,25 @@ def _validate_generic(data: Any, schema_name: str) -> list[str]:
     return _validate(data, schema_name, full=True)
 
 
+def _cmd_mcp_serve(args: argparse.Namespace) -> None:
+    """``papers mcp serve``: run the stdio MCP server (Phase 7).
+
+    This command is the documented HUMAN-READABLE EXCEPTION to the
+    one-envelope contract: it is a long-lived stdio child process that
+    speaks the MCP JSON-RPC protocol (initialize / tools/list /
+    tools/call), not a single JSON envelope. An external agent session
+    connects by launching ``papers mcp serve`` (or
+    ``uv run papers mcp serve``) as a stdio subprocess and speaking the
+    MCP protocol over its stdin/stdout. Diagnostics go to stderr; only
+    protocol messages go to stdout (spec section 6, mirrored for the
+    MCP surface)."""
+    from papercli.agent_contract.mcp_server import serve
+
+    code = serve()
+    if code:
+        sys.exit(code)
+
+
 def _cmd_version(args: argparse.Namespace) -> None:
     """Human-readable exception: prints version text, not a JSON envelope."""
     print(f"papers {__version__} (agent-papercli)")
@@ -1222,6 +1241,17 @@ def build_parser() -> argparse.ArgumentParser:
     # version (explicit subcommand, in addition to --version flag)
     p_ver = sub.add_parser("version", help="Print version (human-readable exception).")
     p_ver.set_defaults(func=_cmd_version)
+
+    # Phase 7: the MCP stdio server (a long-lived child process; the
+    # documented exception to the one-envelope stdout contract).
+    p_mcp = sub.add_parser(
+        "mcp", help="Group: mcp (the stdio MCP server for agent sessions)")
+    mcp_sub = p_mcp.add_subparsers(dest="mcp_sub", metavar="subcommand")
+    p_mcp_serve = mcp_sub.add_parser(
+        "serve",
+        help="Run the stdio MCP server (tools mirror the CLI commands "
+             "1:1; JSON-RPC over stdin/stdout).")
+    p_mcp_serve.set_defaults(func=_cmd_mcp_serve)
 
     # Live provider commands (Phase 2).
     p_search = sub.add_parser(

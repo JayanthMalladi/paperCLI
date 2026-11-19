@@ -73,9 +73,9 @@ Implemented in Phase 1:
 | `papers ingest FILE --run RUN_ID` | implemented (Phase 3, wrong-paper guarded) |
 | `papers version`, `papers --help` | implemented (human-readable exceptions) |
 
-The full contract (all commands below exist and are parseable; every
-unimplemented one returns a well-formed `NOT_IMPLEMENTED` envelope with
-`exit 2` and documents its planned phase):
+The full contract (all commands exist and are parseable; `skill export`
+is implemented in Phase 7; see "What is implemented vs not" for the
+current truth):
 
 ```
 papers search "QUERY" --providers crossref,openalex,arxiv --limit 50
@@ -95,7 +95,49 @@ papers task submit TASK_ID --input result.json
 papers evidence list --run RUN_ID
 papers citations audit --run RUN_ID
 papers skill export --out ./papercli-skill
+papers mcp serve
 ```
+
+## MCP server (connect an external agent session, Phase 7)
+
+`papers mcp serve` runs a stdio Model-Context-Protocol server whose
+tools wrap the CLI's core functions 1:1 -- the tool surface IS the CLI
+contract (no second schema that could drift): every `tools/call` is
+converted to CLI argv and dispatched through the same `main()`, and
+each result is the CLI's JSON envelope (success, error codes, and
+warnings included).
+
+Tools: `search`, `resolve`, `fetch`, `read`, `ingest`, `review_plan`,
+`review_run`, `review_status`, `review_logs`, `review_resume`,
+`review_cancel`, `review_export`, `task_next`, `task_submit`,
+`evidence_list`, `citations_audit`, `doctor`, `schema`.
+
+Connect an agent session by launching the server as a stdio child and
+speaking the MCP protocol over its stdin/stdout (newline-delimited
+JSON-RPC 2.0: `initialize` -> `initialized` -> `tools/list` /
+`tools/call`):
+
+```
+# From the project root (Windows console):
+uv run papers mcp serve
+# or a stdio subprocess, e.g. in Python:
+import subprocess, json
+p = subprocess.Popen(["papers", "mcp", "serve"],
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                     text=True, cwd=".")
+p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method":
+                          "initialize", "params":
+                          {"protocolVersion": "2024-11-05"}}) + "\n")
+# ... read responses one line at a time; see the `schema` tool for the
+# full machine contract.
+```
+
+The transport is a small pure-Python JSON-RPC implementation
+(`src/papercli/agent_contract/mcp_server.py`, ~the handshake +
+`tools/list` + `tools/call` over stdio) with no third-party MCP
+dependency. Unknown tools/methods return structured JSON-RPC or
+envelope errors, never a crash; a live `search` still needs the
+providers' network/credentials as with the CLI.
 
 ## Machine output
 
