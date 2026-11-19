@@ -175,6 +175,8 @@ class ModelAdapter:
         self.budget = budget or ModelBudget()
         self.on_record = on_record
         self.max_re_prompts = max_re_prompts
+        #: D-P5-1: last reconcile's deficit flag -- billed, never absorbed.
+        self.last_budget_deficit = False
         import time as _time
         self._sleep = sleep_fn if sleep_fn is not None else _time.sleep
         # The capability probe runs once against a REAL, self-owned client.
@@ -298,10 +300,10 @@ class ModelAdapter:
 
         Returns a dict: ``ok``, ``data``, ``outcome``, ``attempts``,
         ``usage``, ``cost``, ``prompt_id``, ``retries_waited``,
-        ``validation_errors``, ``reservation``. Never raises for a bad
-        reply -- it records a failed outcome after the bounded re-prompt
-        loop; a 429 becomes a bounded backoff into ``retry_wait``
-        (spec sections 11-12).
+        ``validation_errors``, ``budget_deficit``, ``row_id``. Never
+        raises for a bad reply -- it records a failed outcome after the
+        bounded re-prompt loop; a 429 becomes a bounded backoff into
+        ``retry_wait`` (spec sections 11-12).
         """
         prompt_id = prompt_template_id(system + "\x00" + user, prompt_version)
         if not self.configured:
@@ -338,18 +340,20 @@ class ModelAdapter:
             rate = self.rate_limiter.acquire()
             if not rate.granted:
                 # No token: release the hold, record a retry_wait state.
-                self._reconcile(reservation, http_calls, used_in, used_out)
+                deficit = self._reconcile(reservation, http_calls, used_in, used_out)
                 row = self._record_call(
                     run_id, task_type, prompt_id, prompt_version, protocol_revision,
                     ModelCallOutcome.RETRY_WAIT, used_in, used_out,
                     extra={"wait_seconds": rate.wait_seconds,
-                           "attempts": attempts, "http_calls": http_calls})
+                           "attempts": attempts, "http_calls": http_calls,
+                           "budget_deficit": deficit})
                 return {"ok": False, "data": None, "outcome": ModelCallOutcome.RETRY_WAIT,
                         "throttled": True, "wait_seconds": rate.wait_seconds,
                         "attempts": attempts, "usage": {"input_tokens": used_in,
                                                         "output_tokens": used_out},
                         "cost": None,
                         "prompt_id": prompt_id, "retries_waited": retries_waited,
+                        "budget_deficit": deficit,
                         "validation_errors": errors,
                         "row_id": row}
 
@@ -370,14 +374,16 @@ class ModelAdapter:
                 resp = self._post_chat(payload)
                 http_calls += 1
             except httpx.HTTPError as e:
-                self._reconcile(reservation, http_calls, used_in, used_out)
+                deficit = self._reconcile(reservation, http_calls, used_in, used_out)
                 row = self._record_call(
                     run_id, task_type, prompt_id, prompt_version, protocol_revision,
                     ModelCallOutcome.FAILED, used_in, used_out,
-                    extra={"error": type(e).__name__})
+                    extra={"error": type(e).__name__, "budget_deficit": deficit})
                 return self._fail_result(row, prompt_id, attempts, errors,
                                          {"error": type(e).__name__},
-                                         {"input_tokens": used_in, "output_tokens": used_out})
+                                         {"input_tokens": used_in, "output_tokens": used_out},
+                                         retries_waited=retries_waited,
+                                         budget_deficit=deficit)
             if resp.status_code == 429 and attempt < self.max_re_prompts and allow_retry:
                 # Bounded exponential backoff into retry_wait -- never a storm.
                 delay = min(2 ** attempt, 30)
@@ -389,14 +395,17 @@ class ModelAdapter:
             used_in += usage["input_tokens"]
             used_out += usage["output_tokens"]
             if not (200 <= resp.status_code < 300):
-                self._reconcile(reservation, http_calls, used_in, used_out)
+                deficit = self._reconcile(reservation, http_calls, used_in, used_out)
                 row = self._record_call(
                     run_id, task_type, prompt_id, prompt_version, protocol_revision,
                     ModelCallOutcome.FAILED, used_in, used_out,
-                    extra={"status_code": resp.status_code})
+                    extra={"status_code": resp.status_code,
+                           "budget_deficit": deficit})
                 return self._fail_result(row, prompt_id, attempts, errors,
                                          {"status_code": resp.status_code},
-                                         {"input_tokens": used_in, "output_tokens": used_out})
+                                         {"input_tokens": used_in, "output_tokens": used_out},
+                                         retries_waited=retries_waited,
+                                         budget_deficit=deficit)
             try:
                 content = resp.json()["choices"][0]["message"]["content"]
                 data = extract_json(content)
@@ -405,32 +414,37 @@ class ModelAdapter:
                 errors = [f"parse: {e}"]
                 data = None
             if not errors:
-                self._reconcile(reservation, http_calls, used_in, used_out)
+                deficit = self._reconcile(reservation, http_calls, used_in, used_out)
                 cost = self._cost_estimate(self.model, used_in, used_out)
                 row = self._record_call(
                     run_id, task_type, prompt_id, prompt_version, protocol_revision,
                     ModelCallOutcome.SUCCESS, used_in, used_out,
                     extra={"cost": cost, "usage": {"input_tokens": used_in,
                                                     "output_tokens": used_out},
-                           "http_calls": http_calls})
+                           "http_calls": http_calls,
+                           "budget_deficit": deficit})
                 return {"ok": True, "data": data,
                         "outcome": ModelCallOutcome.SUCCESS,
                         "attempts": attempts,
                         "usage": {"input_tokens": used_in, "output_tokens": used_out},
                         "cost": cost,
                         "prompt_id": prompt_id, "retries_waited": retries_waited,
+                        "budget_deficit": deficit,
                         "validation_errors": [],
                         "row_id": row}
             if attempt >= self.max_re_prompts:
                 break
         # Bounded loop exhausted: record a failed outcome (never a crash).
-        self._reconcile(reservation, http_calls, used_in, used_out)
+        deficit = self._reconcile(reservation, http_calls, used_in, used_out)
         row = self._record_call(
             run_id, task_type, prompt_id, prompt_version, protocol_revision,
             ModelCallOutcome.FAILED, used_in, used_out,
-            extra={"validation_errors": errors[-5:], "http_calls": http_calls})
+            extra={"validation_errors": errors[-5:], "http_calls": http_calls,
+                   "budget_deficit": deficit})
         return self._fail_result(row, prompt_id, attempts, errors, {},
-                                 {"input_tokens": used_in, "output_tokens": used_out})
+                                 {"input_tokens": used_in, "output_tokens": used_out},
+                                 retries_waited=retries_waited,
+                                 budget_deficit=deficit)
 
     def complete_text(self, *, system: str, user: str, task_type: str,
                       prompt_version: str = "v1", protocol_revision: int | str = 1,
@@ -452,16 +466,28 @@ class ModelAdapter:
             return {"input_tokens": 0, "output_tokens": 0}
 
     def _reconcile(self, reservation: Reservation | None, calls: int,
-                    in_t: int, out_t: int) -> None:
-        self.budget.reconcile(reservation, actual_model_calls=calls,
-                              actual_input_tokens=in_t, actual_output_tokens=out_t)
+                   in_t: int, out_t: int) -> bool:
+        """Reconcile the budget hold; return the deficit flag (spec 12).
+
+        A deficit (usage beyond the reservation) is charged against the
+        pool and MUST be surfaced -- never silently absorbed. Callers
+        thread the flag into the result + model-call row so the run
+        summary can disclose it (D-P5-1).
+        """
+        rep = self.budget.reconcile(
+            reservation, actual_model_calls=calls,
+            actual_input_tokens=in_t, actual_output_tokens=out_t)
+        return bool(rep.get("deficit"))
 
     def _fail_result(self, row: dict[str, Any] | None, prompt_id: str, attempts: int,
                      errors: list[str], extra: dict[str, Any],
-                     usage: dict[str, int] | None = None) -> dict[str, Any]:
+                     usage: dict[str, int] | None = None,
+                     retries_waited: int = 0,
+                     budget_deficit: bool = False) -> dict[str, Any]:
         return {"ok": False, "data": None, "outcome": ModelCallOutcome.FAILED,
                 "attempts": attempts, "usage": usage, "cost": None,
-                "prompt_id": prompt_id, "retries_waited": 0,
+                "prompt_id": prompt_id, "retries_waited": retries_waited,
+                "budget_deficit": budget_deficit,
                 "validation_errors": list(errors), "row_id": row,
                 **extra}
 

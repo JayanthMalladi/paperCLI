@@ -82,3 +82,94 @@ def test_evidence_list_cli_records_validate_against_schema(tmp_project, tmp_path
             assert validate(rec, "evidence") == []
     finally:
         os.chdir(REPO)
+
+
+def test_budget_deficit_flag_is_surfaced_not_absorbed():
+    """D-P5-1: when a call's actual usage exceeds its reservation, the
+    result dict AND the recorded model-call row carry budget_deficit=True
+    (a Phase-6 run summary can disclose it). Zero usage -> no deficit."""
+    import httpx
+    from papercli.models.adapter import ModelAdapter
+    from papercli.models.rate_limit import ModelBudget, RateLimiter, DEFAULT_BUDGETS
+
+    rows = []
+    def on_record(rec):
+        rows.append(rec)
+        return {"id": 1}
+
+    def make(prompt_tokens, completion_tokens):
+        client = httpx.Client(transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200, json={"choices": [{"message": {"content": "{}"}}],
+                           "usage": {"prompt_tokens": prompt_tokens,
+                                     "completion_tokens": completion_tokens}})))
+        return ModelAdapter(base_url="https://fake.local", model="m",
+                            api_key="probe-key-not-secret",
+                            client=client,
+                            budget=ModelBudget(DEFAULT_BUDGETS),
+                            rate_limiter=RateLimiter(),
+                            on_record=on_record)
+
+    # The internal reservation holds input_tokens=0, so any nonzero usage
+    # is a deficit that must be disclosed, not absorbed.
+    a = make(5, 3)
+    res = a.complete_json(schema={"type": "object"}, system="s", user="u",
+                          task_type="t")
+    assert res["ok"] is True
+    assert res["budget_deficit"] is True, "deficit must be surfaced in the result"
+    assert rows and rows[-1]["budget_deficit"] is True, "deficit must reach the model-call row"
+    a.close()
+
+    # Zero usage: no deficit.
+    rows.clear()
+    b = make(0, 0)
+    res0 = b.complete_json(schema={"type": "object"}, system="s", user="u",
+                           task_type="t")
+    assert res0["ok"] is True
+    assert res0["budget_deficit"] is False
+    assert rows and rows[-1]["budget_deficit"] is False
+    b.close()
+
+
+def test_wait_seconds_is_pure_query_no_bucket_side_effect():
+    """D-P5-2: wait_seconds() reports the wait WITHOUT decrementing the
+    bucket (the old implementation called acquire() as a side effect)."""
+    from papercli.models.rate_limit import RateLimiter
+    lim = RateLimiter(requests_per_minute=60, capacity=1)
+    before = lim.tokens
+    assert lim.wait_seconds() == 0.0          # a free token is available
+    assert lim.tokens == before, "wait_seconds must not consume a token"
+    lim.acquire()                             # consume the token
+    assert lim.wait_seconds() > 0.0          # now it reports a positive wait
+    assert lim.tokens >= 0.0
+
+
+def test_fail_result_reports_real_retries_waited_on_429():
+    """D-P5-3: a bounded 429 backoff path must report the real retry count,
+    not a hard-coded 0 (and must not crash)."""
+    import httpx
+    from papercli.models.adapter import ModelAdapter, ModelCallOutcome
+    from papercli.models.rate_limit import ModelBudget, RateLimiter, DEFAULT_BUDGETS
+
+    n = {"count": 0}
+    def handler(req):
+        n["count"] += 1
+        if n["count"] <= 2:
+            return httpx.Response(429, json={"error": "rate limited"},
+                                  headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}],
+                                         "usage": {"prompt_tokens": 0,
+                                                    "completion_tokens": 0}})
+    adapter = ModelAdapter(
+        base_url="https://fake.local", model="m",
+        api_key="probe-key-not-secret",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        budget=ModelBudget(DEFAULT_BUDGETS),
+        rate_limiter=RateLimiter(requests_per_minute=600, capacity=600),
+        on_record=lambda rec: {"id": 1})
+    res = adapter.complete_json(schema={"type": "object"}, system="s", user="u",
+                                task_type="t")
+    # Two 429s then a success: the call succeeded AFTER backing off.
+    assert res["ok"] is True, res
+    assert res["retries_waited"] >= 2, "real 429 backoff count must be reported"
+    adapter.close()

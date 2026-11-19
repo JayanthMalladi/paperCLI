@@ -124,8 +124,16 @@ class RateLimiter:
             self._wait(r.wait_seconds)
 
     def wait_seconds(self) -> float:
-        """Seconds until the next token, without consuming one."""
-        return self.acquire().wait_seconds
+        """Seconds until the next token is available, WITHOUT consuming one.
+
+        Pure query: refills to the current instant and reports the deficit
+        wait. Does NOT decrement the bucket (unlike ``acquire``).
+        """
+        self._refill()
+        if self.tokens >= 1.0:
+            return 0.0
+        needed = 1.0 - self.tokens
+        return round(needed / self.refill_per_second, 3) if self.refill_per_second > 0 else 0.0
 
 
 @dataclass
