@@ -471,7 +471,7 @@ def test_fresh_install_supported_env_preflight_and_plan(tmp_path):
     exe = _installed_papers()
     if exe:
         rc, out, err = _run_papers_via(exe, "--version")
-        assert rc == 0 and "papers 0.1.0" in out, f"{out} {err}"
+        assert rc == 0 and "papers 0.2.0" in out, f"{out} {err}"
         rc, out, _ = _run_papers_via(exe, "schema", "--list")
         assert rc == 0 and json.loads(out)["status"] == "ok"
 

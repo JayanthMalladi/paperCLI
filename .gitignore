@@ -30,3 +30,9 @@ _main_full*
 _p7_*
 _mcp_*
 _miktex_warm.*
+
+# Phase 8: local build venvs (never commit; the distribution is in dist/)
+.v8/
+.v8b/
+.v8c/
+.v8fresh/

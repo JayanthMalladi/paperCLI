@@ -192,7 +192,7 @@ max_output_tokens 150000 · max_estimated_cost_usd null`. These are example
 ceilings, not promised throughput or cost. A null monetary cap is only
 valid with hard token/call limits set.
 
-## What is implemented vs not (Phases 1–7, honestly)
+## What is implemented vs not (Phases 1–8, honestly)
 
 **Implemented**
 - `init`, `config show --redact`, `doctor --json`, `schema`, `version`,
@@ -296,6 +296,22 @@ valid with hard token/call limits set.
   (`docs/05-user-guide.md`), the MCP connection guide
   (`docs/04-mcp-connection.md`), and the honest limitations above.
 
+**Phase 8 – Acceptance + release (spec section 18 step 8)**
+- The robotics pilot brief + validated plan + doctor preflight record
+  (committed under `examples/`; the one overnight run is launched by the
+  orchestrator after this gate, not by the test suite).
+- The acceptance DELTA (`tests/test_phase8_acceptance.py`): the
+  failure-injection matrix (provider 429 / keyless-S2 flagged,
+  wrong-paper rejected, inconclusive identity flagged, scanned PDF capped,
+  fabricated citation key caught, interrupted-then-resumed run re-runs
+  only pending work), metrics honesty (completed counts; a partial run is
+  never labeled "completed"), and the fresh-install row.
+- The release: `agent-papercli` **0.2.0** (sdist + pure-Python wheel,
+  `uv build`), the v0.2.0 release notes + breaking-change note
+  (Sci-Hub removed — never in scope; exit 3 reserved, migration guidance) + honest
+  limitations (`RELEASE.md`).
+
+
 **Not yet implemented / out of scope (spec section 2)**
 - Browser automation, paywall bypass (Sci-Hub), CAPTCHA solving, and
   code execution of content found in papers (spec section 16: never
@@ -312,6 +328,28 @@ valid with hard token/call limits set.
   server.
 - GUI / interactive TUI; the CLI is machine-first (one JSON envelope
   per command).
+
+## Launch the overnight pilot (Phase 8, one command per step)
+
+The Phase-8 pilot brief + plan are committed under `examples/`
+(batch 1). From a clean 3.12 venv with the package installed:
+
+1. `papers review plan --brief examples/brief-robotics.yaml --out examples/review-plan-robotics.yaml`
+   (re-validate the brief into the protocol + planned Run)
+2. `papers review run --plan examples/review-plan-robotics.yaml --detach`
+   (launch the detached overnight worker)
+3. `papers review status <RUN_ID>` / `papers review resume <RUN_ID> --detach`
+   (watch it; recover it in the morning if it stalled or the host rebooted)
+4. `papers review export <RUN_ID> --formats md,pdf,docx,bib,csl,csv`
+
+The committed plan maps to Run `run-7dee3084-32ce-4f5f-b4e5-d09bceccf14f`
+(protocol hash `c10220eb45e76566…`, state `planned`): 20 planned query
+variants across arxiv/crossref/openalex/s2, expected record volume 1000,
+full-text cap 60, guardrails wall=360 min / queries=30 / discovered=1000 /
+full-text=60 / model-calls=300 / in-tokens=1,000,000 / out-tokens=150,000 /
+USD=null. A changed brief or config creates a NEW run revision — it never
+mutates the prior one (spec 5). Full details + the honest limitations are
+in `RELEASE.md`.
 
 ## Live provider smoke tests
 

@@ -18,7 +18,7 @@ from tests.conftest import run_papers
 def test_version_exits_0(tmp_project):
     rc, out, _ = run_papers("version", cwd=tmp_project)
     assert rc == 0
-    assert "papers 0.1.0" in out
+    assert "papers 0.2.0" in out
 
 
 def test_init_exits_0(tmp_path):

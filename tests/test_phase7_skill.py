@@ -167,10 +167,13 @@ def test_readme_implemented_vs_not_is_final_truth():
     readme = (REPO / "README.md").read_text(encoding="utf-8")
     i = readme.find("## What is implemented vs not")
     block = readme[i:i + 8000]
-    assert "Phases 1–7" in block or "Phases 1-7" in block
+    # Phase 8 is the final build phase: the section is the Phase-1..8
+    # final truth (a Phases-1..7 heading means Phase 8 was not folded in).
+    assert "Phases 1–8" in block or "Phases 1-8" in block
     for truth in ("Phase 4", "Phase 5", "Phase 6", "Phase 7",
-                  "papers mcp serve", "papers skill export",
-                  "registry-only"):
+                  "Phase 8", "papers mcp serve", "papers skill export",
+                  "registry-only", "test_phase8_acceptance.py",
+                  "RELEASE.md"):
         assert truth in block, truth
     # The old "deferred" claims are gone from the section.
     assert "Exporter(s) (md/pdf/docx/bib/csl/csv)." not in block or \
