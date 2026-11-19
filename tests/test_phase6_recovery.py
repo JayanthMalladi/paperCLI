@@ -119,7 +119,8 @@ def test_resume_re_dispatches_only_unfinished(tmp_path):
         g.release()
         _write_json_atomic(kw["work_dir"] / "handshake.json",
                           {"accepted": True, "pid": os.getpid(),
-                           "run_id": rid, "start_ts": ""})
+                           "run_id": rid, "start_ts": "",
+                           "token": kw.get("handshake_token")})
         return None
 
     res = resume_run(store, rid, child_fn=child_fn)
@@ -146,7 +147,8 @@ def test_resume_changed_brief_requires_new_revision(tmp_path):
         launched["yes"] = True
         _write_json_atomic(kw["work_dir"] / "handshake.json",
                           {"accepted": True, "pid": os.getpid(),
-                           "run_id": rid, "start_ts": ""})
+                           "run_id": rid, "start_ts": "",
+                           "token": kw.get("handshake_token")})
         return None
 
     # The SAVED brief passes the preflight (digests match) and re-launches.

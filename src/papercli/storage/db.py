@@ -50,6 +50,11 @@ class PaperStore:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # The detached worker and the CLI share this database (two
+        # processes on Windows): a short busy timeout makes a lock wait
+        # instead of a 'database is locked' error (spec section 11,
+        # single-writer strategy with a short critical section).
+        self._conn.execute("PRAGMA busy_timeout = 5000")
 
     def close(self) -> None:
         self._conn.close()
@@ -395,6 +400,21 @@ class PaperStore:
         row = self._conn.execute(
             "SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
         return dict(row) if row is not None else None
+
+    def find_run_by_plan_id(self, plan_id: str) -> dict[str, Any] | None:
+        """The Run row whose saved plan carries ``plan_id`` (None if
+        none). A plan file written by ``papers review plan`` names the run
+        it created; this is how ``papers review run`` re-finds that row."""
+        if not plan_id:
+            return None
+        for row in self._conn.execute("SELECT id, plan_json FROM runs").fetchall():
+            try:
+                plan = json.loads(row["plan_json"] or "{}")
+            except ValueError:
+                continue
+            if plan.get("plan_id") == plan_id:
+                return self.run_row(row["id"])
+        return None
 
     # -- research (Phase 4) -------------------------------------------------
     def save_run_plan(self, run_id: str, plan: dict[str, Any]) -> None:

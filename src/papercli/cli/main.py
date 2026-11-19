@@ -611,6 +611,414 @@ def _cmd_review_plan(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Review lifecycle commands (Phase 6 batch A-3: detach / recovery / CLI)
+# ---------------------------------------------------------------------------
+
+#: The Phase-6 worker-child module override (offline test seam -- the
+#: production default is the real worker; see fake_worker_child.py).
+_WORKER_MODULE_ENV = "PAPERS_WORKER_MODULE"
+
+
+def _find_review_run(store, run_id_or_plan: str | None = None,
+                    plan: str | None = None):
+    """Resolve a run id: the literal run id, or the run a PLAN names
+    (``plan_id`` -> its created Run row). Returns (run_id, row)."""
+    row = store.run_row(run_id_or_plan) if run_id_or_plan else None
+    if row is not None:
+        return str(row["id"]), row
+    # Fall back to a plan file: its plan_id names the run it created.
+    if plan:
+        import yaml
+        try:
+            doc = yaml.safe_load(Path(plan).read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as e:
+            raise ConfigError(
+                f"cannot read plan file '{plan}': {e}",
+                details={"plan": plan})
+        pid = (doc or {}).get("plan_id")
+        if pid:
+            row = store.find_run_by_plan_id(str(pid))
+            if row is not None:
+                return str(row["id"]), row
+    return None, None
+
+
+def _cmd_review_run(args: argparse.Namespace) -> None:
+    """``papers review run --plan review-plan.yaml --detach``.
+
+    Validates the plan, ensures the Run row, launches the detached
+    worker, and reports "accepted" ONLY when the child handshaked +
+    acquired its lock (spec section 6) -- not when the review completed.
+    Exit 0 accepted; exit 2 when it cannot start (bad plan / lock held
+    / changed brief)."""
+    from papercli.jobs.detach import LaunchError, launch_worker
+
+    plan_path = Path(args.plan)
+    if not plan_path.exists():
+        _emit_review_error(
+            "CONFIG_REQUIRED",
+            f"plan file not found: {plan_path}",
+            {"plan": str(plan_path)})
+    import yaml
+    try:
+        doc = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        _emit_review_error(
+            "CONFIG_REQUIRED", f"invalid plan YAML: {e}",
+            {"plan": str(plan_path)})
+
+    # Preflight: a plan must carry the fields the worker needs (query
+    # plan + limits). A plan whose brief has changed is NOT silently
+    # re-used -- resume/plan make the revision explicit (spec section 5).
+    limits = (doc or {}).get("limits") or {}
+    queries = [q for q in ((doc or {}).get("queries") or [])
+               if q.get("provider") != "(truncated)"]
+    if not limits or not queries:
+        _emit_review_error(
+            "CONFIG_REQUIRED",
+            "plan has no limits or no usable queries; regenerate it with "
+            "`papers review plan`",
+            {"plan": str(plan_path)})
+
+    from papercli.storage.db import PaperStore
+    with PaperStore() as store:
+        run_id, row = _find_review_run(store, plan=str(plan_path))
+        if row is None:
+            # No run row yet for this plan: create the planned Run.
+            pid = str((doc or {}).get("plan_id") or store.new_id("plan"))
+            from papercli.research.plan import protocol_hash
+            # A plan file is the validated protocol itself; keep its
+            # protocol hash (or derive it from the plan content).
+            plan = dict(doc)
+            plan.setdefault("protocol_hash", protocol_hash(plan))
+            limits = dict(plan.get("limits") or {})
+            run_id = store.create_run(
+                limits=limits, state="running",
+                protocol_hash=str(plan.get("protocol_hash", "")))
+            import json as _json
+            with store._conn:
+                store._conn.execute(
+                    "UPDATE runs SET plan_json=? WHERE id=?",
+                    (_json.dumps({**plan, "plan_id": pid}, sort_keys=True),
+                     run_id))
+            row = store.run_row(run_id)
+        # Launch: the child runs in the project's own interpreter; the
+        # offline test seam swaps the module via the env var.
+        try:
+            res = launch_worker(
+                store, run_id, detach=args.detach,
+                detach_timeout_seconds=(5.0 if args.detach else 30.0))
+        except LaunchError as e:
+            _emit_review_error(
+                e.code, e.message, {"run_id": run_id, **e.details})
+        # "accepted" = the child handshaked + acquired its lock (the
+        # review has NOT completed -- spec section 6). The run row moves
+        # planned/queued -> running now that a live worker holds it. The
+        # UPDATE is a CAS on the current state: a child that already
+        # closed the run (terminal state) is NEVER clobbered back to
+        # 'running' (a fast worker finishes before this write lands).
+        with store._conn:
+            store._conn.execute(
+                "UPDATE runs SET state='running' WHERE id=? AND state IN "
+                "('planned','queued')", (run_id,))
+        row = store.run_row(run_id)
+        if args.detach:
+            ok_env = ok(data={
+                "run_id": run_id,
+                "state": row.get("state"),
+                "accepted": True,
+                "worker_pid": res.pid,
+                "detach": True,
+                "lock_file": str(res.lock_file) if res.lock_file else None,
+                "handshake": bool(res.handshake),
+            })
+            emit(ok_env)
+            return
+        # Foreground: the command BLOCKS until the worker closes, then
+        # reports the final state. A partial/failed closure is exit 6
+        # (spec section 6: batch/foreground run completed partially).
+        final_state = str((store.run_row(run_id) or {}).get("state")
+                          or row.get("state"))
+        ok_env = ok(data={
+            "run_id": run_id,
+            "state": final_state,
+            "accepted": True,
+            "worker_pid": res.pid,
+            "detach": False,
+            "handshake": bool(res.handshake),
+            "worker_exit_code": res.exit_code,
+        })
+        emit(ok_env)
+        if final_state in ("partial", "failed"):
+            sys.exit(6)
+
+
+def _cmd_review_status(args: argparse.Namespace) -> None:
+    """``papers review status RUN_ID``.
+
+    Run state + per-task-type progress + heartbeat age + STALE flag +
+    budget usage-vs-limits + failures. A successful status call CAN
+    describe a failed/partial run (spec section 6)."""
+    import json as _json
+    from papercli.jobs.detach import (
+        STALE_AFTER_SECONDS, heartbeat_age_seconds, lock_held)
+    from papercli.jobs.tasks import TaskQueue
+    from papercli.storage.db import PaperStore
+
+    with PaperStore() as store:
+        row = store.run_row(args.run_id)
+        if row is None:
+            _emit_review_error("RUN_NOT_FOUND",
+                               f"run not found: {args.run_id}",
+                               {"run_id": args.run_id})
+        tasks = TaskQueue(store).list(args.run_id)
+        by_type: dict[str, dict[str, int]] = {}
+        for t in tasks:
+            d = by_type.setdefault(t.type, {})
+            d[t.state] = d.get(t.state, 0) + 1
+        counts = {
+            "total": len(tasks),
+            "succeeded": sum(1 for t in tasks if t.state == "succeeded"),
+            "failed": sum(1 for t in tasks if t.state == "failed"),
+            "unfinished": sum(1 for t in tasks
+                              if t.state in ("pending", "leased", "running",
+                                             "retry_wait")),
+        }
+        hb_age = heartbeat_age_seconds(store, args.run_id)
+        held = lock_held(store, args.run_id)
+        stale = bool(hb_age is not None
+                     and hb_age > STALE_AFTER_SECONDS)
+        # Budget block (same restore as the run summary).
+        counters = _json.loads(row.get("counters_json") or "{}")
+        budget = counters.get("worker", {}).get("budget") or {}
+        limits = _json.loads(row.get("limits_json") or "{}")
+        from papercli.exports.run_summary import build_run_summary
+        summary = build_run_summary(store, args.run_id)
+        env = ok(data={
+            "run_id": args.run_id,
+            "state": row.get("state"),
+            "task_progress": by_type,
+            "task_counts": counts,
+            "heartbeat_age_seconds": round(hb_age, 3) if hb_age is not None
+                                     else None,
+            "lock": {"held": held.get("held"), "stale": held.get("stale"),
+                     "holder_pid": held.get("holder_pid"),
+                     "reason": held.get("reason")},
+            "stale": stale,
+            "budget": summary.get("budget"),
+            "failures": summary.get("failures"),
+            "counts": summary.get("counts"),
+            "started_at": row.get("started_at"),
+            "ended_at": row.get("ended_at"),
+        })
+        emit(env)
+
+
+def _cmd_review_logs(args: argparse.Namespace) -> None:
+    """``papers review logs RUN_ID --follow``.
+
+    Streams worker.log.jsonl, one JSON envelope per line (spec section 6
+    batch/follow form). With --follow it tails the file until the run
+    closes or the user interrupts."""
+    import json as _json
+    import time as _time
+    from papercli.exports.run_summary import run_dir
+    from papercli.storage.db import PaperStore
+
+    with PaperStore() as store:
+        row = store.run_row(args.run_id)
+        if row is None:
+            _emit_review_error("RUN_NOT_FOUND",
+                               f"run not found: {args.run_id}",
+                               {"run_id": args.run_id})
+        log = run_dir(store, args.run_id) / "worker.log.jsonl"
+        if not log.exists():
+            emit(ok(data={"run_id": args.run_id, "lines": 0,
+                          "note": "no worker log yet"}))
+            return
+        emitted: list[str] = []
+        pos = 0
+        while True:
+            with log.open("r", encoding="utf-8") as fh:
+                fh.seek(pos)
+                for line in fh:
+                    line = line.rstrip("\n")
+                    if not line.strip():
+                        continue
+                    emit_str = _json.dumps(_json.loads(line),
+                                        ensure_ascii=False)
+                    emitted.append(emit_str)
+                pos = fh.tell()
+            if not args.follow:
+                break
+            # A follow stream: one envelope per line on stdout; stop when
+            # the run reaches a terminal state and the log stops growing.
+            state = (store.run_row(args.run_id) or {}).get("state")
+            if state in ("completed", "partial", "failed", "cancelled") and pos > 0:
+                break
+            _time.sleep(0.5)
+        # Re-emit as a single JSON array so stdout stays one envelope
+        # (spec section 6: default stdout is one JSON envelope; the follow
+        # stream's envelopes are the data).
+        emit(ok(data={"run_id": args.run_id, "lines": len(emitted),
+                      "events": [_json.loads(l) for l in emitted]}))
+
+
+def _cmd_review_resume(args: argparse.Namespace) -> None:
+    """``papers review resume RUN_ID --detach``.
+
+    The explicit-recovery path: stale detection, idempotent re-queue,
+    re-launch. A changed brief/config -> exit 2 with new-revision
+    guidance (spec section 5)."""
+    from papercli.jobs.detach import BriefChangedError, RunNotStartable
+    from papercli.jobs.recovery import resume_run
+    from papercli.storage.db import PaperStore
+
+    brief_path = getattr(args, "brief", None)
+    brief = None
+    if brief_path:
+        import yaml
+        brief = yaml.safe_load(Path(brief_path).read_text(encoding="utf-8"))
+
+    with PaperStore() as store:
+        if store.run_row(args.run_id) is None:
+            _emit_review_error("RUN_NOT_FOUND",
+                               f"run not found: {args.run_id}",
+                               {"run_id": args.run_id})
+        try:
+            res = resume_run(
+                store, args.run_id, brief=brief,
+                detach_flag=args.detach,
+                detach_timeout_seconds=(5.0 if args.detach else 30.0))
+        except BriefChangedError as e:
+            _emit_review_error("BRIEF_CHANGED", e.message, e.details)
+        except RunNotStartable as e:
+            _emit_review_error("RUN_NOT_STARTABLE", e.message, e.details)
+        env = ok(data={
+            "run_id": res.run_id,
+            "state": res.state,
+            "resumed": res.resumed,
+            "launched": res.launched,
+            "worker_pid": res.pid,
+            "tasks_released": res.tasks_released,
+            "tasks_requeued": res.tasks_requeued,
+            "notes": res.notes,
+        })
+        emit(env)
+
+
+def _cmd_review_cancel(args: argparse.Namespace) -> None:
+    """``papers review cancel RUN_ID``.
+
+    Writes the worker's cancel-request file so the RUNNING worker stops
+    new dispatch + checkpoints + writes the partial status bundle (spec
+    12). If no worker is running, the run is marked cancelled directly."""
+    import json as _json
+    from papercli.jobs.detach import lock_held
+    from papercli.storage.db import PaperStore
+
+    with PaperStore() as store:
+        row = store.run_row(args.run_id)
+        if row is None:
+            _emit_review_error("RUN_NOT_FOUND",
+                               f"run not found: {args.run_id}",
+                               {"run_id": args.run_id})
+        if row.get("state") in ("completed", "partial", "failed",
+                                "cancelled"):
+            _emit_review_error(
+                "RUN_ALREADY_CLOSED",
+                f"run {args.run_id} already ended in state "
+                f"'{row.get('state')}'; nothing to cancel",
+                {"run_id": args.run_id, "state": row.get("state")})
+        held = lock_held(store, args.run_id)
+        worker_running = bool(held.get("held")) and not held.get("stale")
+        from papercli.exports.run_summary import run_dir
+        cancel = run_dir(store, args.run_id) / "cancel-request"
+        if worker_running:
+            # The running worker polls this file; it stops scheduling,
+            # terminates bounded child work where safe, checkpoints, and
+            # writes the partial status bundle on its next loop (spec 12).
+            cancel.write_text(_json.dumps(
+                {"requested_at": _utc_now_iso_cli(),
+                 "note": "stop new dispatch; checkpoint + partial bundle"},
+                indent=2), encoding="utf-8")
+            env = ok(data={
+                "run_id": args.run_id, "worker_running": True,
+                "cancel_request": str(cancel),
+                "note": "the worker will stop dispatch and close a "
+                        "partial bundle on its next checkpoint",
+            })
+            emit(env)
+        else:
+            # No live worker: release any stale lock + expired leases and
+            # mark the run cancelled directly (an interrupted run with no
+            # live worker is a partial state, spec section 5).
+            from papercli.jobs.recovery import requeue_unfinished
+            released, requeued = requeue_unfinished(store, args.run_id)
+            store.update_run(args.run_id, state="cancelled",
+                             ended_at=_utc_now_iso_cli())
+            env = ok(data={
+                "run_id": args.run_id, "worker_running": False,
+                "state": "cancelled",
+                "tasks_released": released, "tasks_requeued": requeued,
+            })
+            emit(env)
+
+
+def _cmd_review_export(args: argparse.Namespace) -> None:
+    """``papers review export RUN_ID --formats md,pdf,docx,bib,csl,csv``.
+
+    Runs the Phase-6 export surface (structured dumps + run summary).
+    Rendered md/pdf/docx are recorded as DEFERRED to Phase 7 in the
+    artifact inventory -- never silently missing. Exit 0 on success;
+    exit 6 when the run itself is partial (its summary is still
+    written)."""
+    from papercli.exports.run_summary import (
+        build_run_summary, write_structured_dumps, write_run_summary)
+    from papercli.storage.db import PaperStore
+
+    formats = [f for f in (getattr(args, "formats", None) or
+                           "md,pdf,docx,bib,csl,csv").split(",")
+               if f.strip()]
+    with PaperStore() as store:
+        row = store.run_row(args.run_id)
+        if row is None:
+            _emit_review_error("RUN_NOT_FOUND",
+                               f"run not found: {args.run_id}",
+                               {"run_id": args.run_id})
+        out = write_structured_dumps(store, args.run_id,
+                                     formats=formats)
+        state = str(row.get("state") or out.get("state"))
+        # The COMMAND succeeded (the bundle was written): exit 0. The
+        # run's own state (which may be partial/failed) is reported in the
+        # envelope data, never silently dropped (spec section 6).
+        env = ok(data={
+            "run_id": args.run_id,
+            "state": state,
+            "written": out.get("written"),
+            "deferred": out.get("deferred"),
+            "formats_requested": formats,
+        })
+        emit(env)
+
+
+def _emit_review_error(code: str, message: str,
+                       details: dict | None = None) -> None:
+    """Emit a review-lifecycle error envelope and exit 2 (spec section 6:
+    input/configuration/preflight failure)."""
+    emit(error(code, message, retryable=False,
+               details=details or {}))
+    sys.exit(2)
+
+
+def _utc_now_iso_cli() -> str:
+    from papercli.storage.db import utc_now_iso
+    return utc_now_iso()
+
+
 def _cmd_task_next(args: argparse.Namespace) -> None:
     """``papers task next --run RUN_ID --worker AGENT_ID`` (D-2 fix).
 
@@ -863,7 +1271,10 @@ def build_parser() -> argparse.ArgumentParser:
         return _group_map[group_name]
 
     _implemented_cmds = {"review plan", "task next", "task submit",
-                         "evidence list", "citations audit"}
+                         "evidence list", "citations audit",
+                         "review run", "review status", "review logs",
+                         "review resume", "review cancel",
+                         "review export"}
 
     review_sub = _ensure_group("review", "Group: review (research pipeline)")
     task_sub = _ensure_group("task", "Group: task (lease-based task protocol)")
@@ -877,6 +1288,49 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Where to write the plan YAML "
                               "(default: review-plan.yaml).")
     p_rplan.set_defaults(func=_cmd_review_plan)
+
+    # Phase 6 review lifecycle (detach / recovery / status / logs /
+    # cancel / export). These are live commands now (batch A-3).
+    p_rrun = review_sub.add_parser(
+        "run", help="Launch a review run (foreground or detached).")
+    p_rrun.add_argument("--plan", required=True,
+                        help="Path to the plan YAML (from `papers review plan`).")
+    p_rrun.add_argument("--detach", action="store_true", default=False,
+                        help="Launch the detached worker; wait for its handshake.")
+    p_rrun.set_defaults(func=_cmd_review_run)
+
+    p_rstat = review_sub.add_parser(
+        "status", help="Query run status (state, progress, heartbeat, budget).")
+    p_rstat.add_argument("run_id", help="Run id.")
+    p_rstat.set_defaults(func=_cmd_review_status)
+
+    p_rlogs = review_sub.add_parser(
+        "logs", help="Stream run worker logs (one JSON envelope per line).")
+    p_rlogs.add_argument("run_id", help="Run id.")
+    p_rlogs.add_argument("--follow", action="store_true", default=False,
+                         help="Tail the log until the run closes.")
+    p_rlogs.set_defaults(func=_cmd_review_logs)
+
+    p_rres = review_sub.add_parser(
+        "resume", help="Resume an interrupted run (explicit recovery).")
+    p_rres.add_argument("run_id", help="Run id.")
+    p_rres.add_argument("--detach", action="store_true", default=False,
+                        help="Re-launch the detached worker.")
+    p_rres.add_argument("--brief", default=None,
+                        help="Path to the current brief (changed-brief check).")
+    p_rres.set_defaults(func=_cmd_review_resume)
+
+    p_rcancel = review_sub.add_parser(
+        "cancel", help="Cancel a running review (checkpoint + partial bundle).")
+    p_rcancel.add_argument("run_id", help="Run id.")
+    p_rcancel.set_defaults(func=_cmd_review_cancel)
+
+    p_rexp = review_sub.add_parser(
+        "export", help="Export the output bundle for a run.")
+    p_rexp.add_argument("run_id", help="Run id.")
+    p_rexp.add_argument("--formats", default="md,pdf,docx,bib,csl,csv",
+                        help="Comma-separated formats (default: all).")
+    p_rexp.set_defaults(func=_cmd_review_export)
 
     p_tnext = task_sub.add_parser(
         "next", help="Lease the next task for an external worker.")

@@ -64,13 +64,9 @@ _STUB_COMMANDS = [
     # covered in test_phase4_research.py), so they no longer belong here.
     # Phase 5 implemented "citations audit" (live; covered in
     # test_phase5_citations.py), so it no longer belongs here either.
-    # The remaining contract commands are still documented NOT_IMPLEMENTED.
-    ["review", "run", "--plan", "p.yaml", "--detach"],
-    ["review", "status", "RUN_ID"],
-    ["review", "logs", "RUN_ID", "--follow"],
-    ["review", "resume", "RUN_ID", "--detach"],
-    ["review", "cancel", "RUN_ID"],
-    ["review", "export", "RUN_ID", "--formats", "md,bib"],
+    # Phase 6 implemented the review lifecycle commands (run/status/logs/
+    # resume/cancel/export -- covered in test_phase6_cli_review.py), so they
+    # no longer belong here. Only the Phase-7 skill export remains a stub.
     ["skill", "export", "--out", "./papercli-skill"],
 ]
 

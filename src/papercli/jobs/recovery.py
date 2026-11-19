@@ -37,6 +37,7 @@ __all__ = [
     "BriefChangedError",
     "ResumeResult",
     "brief_hash",
+    "requeue_unfinished",
     "saved_brief_ref",
     "resume_run",
 ]
@@ -91,6 +92,11 @@ def _requeue_unfinished(store: PaperStore, run_id: str) -> tuple[int, int]:
             if cur.rowcount:
                 requeued += 1
     return released, requeued
+
+
+#: Public alias: the idempotent re-queue of a crashed worker's unfinished
+#: tasks (the cancel path for a no-live-worker run, spec 12).
+requeue_unfinished = _requeue_unfinished
 
 
 def brief_hash(brief: Mapping[str, Any]) -> str:

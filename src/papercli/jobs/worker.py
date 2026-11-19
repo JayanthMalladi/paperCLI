@@ -1059,13 +1059,16 @@ def _worker_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db-path", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--heartbeat-interval", type=float, default=10.0)
+    parser.add_argument("--handshake-token", default=None,
+                        help="Launch nonce to stamp on the handshake.")
     ns = parser.parse_args(argv)
 
     from papercli.storage.db import PaperStore
     store = PaperStore(Path(ns.db_path))
     try:
         return run_child(store, ns.run_id,
-                         heartbeat_interval=ns.heartbeat_interval)
+                         heartbeat_interval=ns.heartbeat_interval,
+                        handshake_token=ns.handshake_token)
     finally:
         store.close()
 

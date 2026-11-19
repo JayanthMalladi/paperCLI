@@ -317,6 +317,7 @@ class RunLockGuard:
         self._thread: threading.Thread | None = None
         self._stop = False
         self._pid = os.getpid()
+        self._released = False
         if background_heartbeat:
             self._start_heartbeat_thread()
 
@@ -415,17 +416,22 @@ class RunLockGuard:
         except OSError:
             pass
 
-    def release(self) -> None:
-        """Delete the marker on the normal close path (the child's lock is
-        RELEASED by the child on normal close, spec 12)."""
-        self._release_quiet()
-
     def __enter__(self) -> "RunLockGuard":
         self.acquire()
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.release()
+
+    # release() is idempotent: the worker closes its own guard AND the
+    # child's run_child closes it again on the normal path.
+    def release(self) -> None:
+        """Delete the marker on the normal close path (the child's lock is
+        RELEASED by the child on normal close, spec 12). Idempotent."""
+        if getattr(self, "_released", False):
+            return
+        self._released = True
+        self._release_quiet()
 
 
 def _read_marker_pid(path: Path) -> int:
@@ -458,24 +464,45 @@ def acquire_run_lock(store: PaperStore, run_id: str, *,
 
 def _child_arg_array(store: PaperStore, run_id: str,
                      executable: str | None = None,
-                     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL) -> list[str]:
-    """The child's argument array (never a shell string, spec section 12)."""
+                     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
+                     handshake_token: str | None = None) -> list[str]:
+    """The child's argument array (never a shell string, spec section 12).
+
+    ``PAPERS_WORKER_MODULE`` selects the child module: the production
+    worker or the offline test fake (``papercli.jobs.fake_worker_child``
+    -- a documented test seam, never the production default)."""
     exe = str(executable) if executable else sys.executable
-    return [
+    module = os.environ.get("PAPERS_WORKER_MODULE", "papercli.jobs.worker")
+    # Absolute db path: the child's CWD is the run dir, so a relative
+    # path would resolve to the wrong database.
+    db_path = str(Path(store.db_path).resolve())
+    args = [
         exe,
         "-m",
-        "papercli.jobs.worker",
-        "--db-path", str(store.db_path),
+        module,
+        "--db-path", db_path,
         "--run-id", run_id,
         "--heartbeat-interval", f"{heartbeat_interval:g}",
     ]
+    if handshake_token:
+        args.extend(["--handshake-token", handshake_token])
+    return args
 
 
 def _spawn_default_child(store: PaperStore, run_id: str,
-                         heartbeat_interval: float) -> subprocess.Popen:
+                         heartbeat_interval: float,
+                         handshake_token: str | None = None) -> subprocess.Popen:
     """The production child: the project's own interpreter (never a bare
-    'python' on PATH, never a shell) runs the worker entry."""
-    args = _child_arg_array(store, run_id, heartbeat_interval=heartbeat_interval)
+    'python' on PATH, never a shell) runs the worker entry.
+
+    The child's stdout/stderr are redirected to ``worker-output.log`` in
+    the run dir (crash diagnostics) so the detached worker NEVER holds the
+    launcher's output stream: closing the originating terminal (or a piped
+    caller waiting on EOF) does not kill the job, and a piped launch
+    returns as soon as the worker handshakes (spec section 12)."""
+    args = _child_arg_array(store, run_id,
+                            heartbeat_interval=heartbeat_interval,
+                            handshake_token=handshake_token)
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
         # CREATE_NEW_PROCESS_GROUP: closing the originating terminal must
@@ -484,19 +511,32 @@ def _spawn_default_child(store: PaperStore, run_id: str,
     else:
         kwargs["start_new_session"] = True
     kwargs["cwd"] = str(_work_dir_for(store, run_id))
-    return subprocess.Popen(args, **kwargs)
+    # Redirect the child's stdout/stderr to a run-dir log file (the
+    # structured worker log is worker.log.jsonl; this captures a crash
+    # traceback). Kept open on the Popen handle so the child's inherited
+    # handle stays valid for its whole life.
+    out_path = _work_dir_for(store, run_id) / "worker-output.log"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_fh = open(str(out_path), "ab")
+    kwargs["stdout"] = out_fh
+    kwargs["stderr"] = out_fh
+    proc = subprocess.Popen(args, **kwargs)
+    proc._papercli_out = out_fh  # type: ignore[attr-defined]
+    return proc
 
 
 def _wait_for_handshake(handshake_file: Path, run_id: str,
-                       timeout: float) -> dict[str, Any]:
+                       timeout: float,
+                       handshake_token: str | None = None) -> dict[str, Any]:
     """Boundedly wait for the child's durable handshake (spec 12: startup
     is confirmed by the HANDSHAKE file, never by a PID alone).
 
-    The stale handshake is deleted before the child is spawned, so any
-    accepted handshake that appears afterwards belongs to THIS launch.
-    (We do NOT require the handshake's pid to equal the launcher's
-    Popen pid: on some hosts the process handle's pid differs from the
-    child's own os.getpid().)"""
+    The stale handshake is deleted before the child is spawned, and the
+    child stamps it with a launch NONCE this launcher generated, so a
+    handshake left behind by an earlier launch can never be mistaken for
+    this one. (We do NOT require the handshake's pid to equal the
+    launcher's Popen pid: on some hosts the process handle's pid differs
+    from the child's own os.getpid().)"""
     deadline = time.monotonic() + max(0.1, float(timeout))
     while time.monotonic() < deadline:
         if handshake_file.exists():
@@ -510,9 +550,14 @@ def _wait_for_handshake(handshake_file: Path, run_id: str,
                     f"the worker rejected the launch: {hs.get('error')}",
                     {"run_id": hs.get("run_id"), "error": hs.get("error")})
             hs_id = hs.get("run_id")
-            if hs_id in (None, "", run_id):
+            if hs_id not in (None, "", run_id):
+                # A handshake for a different run -- keep waiting.
+                time.sleep(0.05)
+                continue
+            if handshake_token is None or hs.get("token") == handshake_token:
                 return hs
-            # A handshake for a different run -- keep waiting.
+            # A handshake from another launch (token mismatch) -- keep
+            # waiting for this launch's own handshake.
         time.sleep(0.05)
     raise HandshakeTimeout(
         "the worker did not handshake within the bound; the launch is NOT "
@@ -577,18 +622,25 @@ def launch_worker(
             handshake_file.unlink()
         except OSError:
             pass
+    # The launch nonce: the child stamps its handshake with it (double
+    # safety on top of the deletion above).
+    import uuid
+    handshake_token = uuid.uuid4().hex
 
     process: subprocess.Popen | None
     if child_fn is not None:
         process = child_fn(store=store, run_id=run_id, work_dir=work_dir,
                            cfg=cfg,
-                           heartbeat_interval=heartbeat_interval)
+                           heartbeat_interval=heartbeat_interval,
+                           handshake_token=handshake_token)
     else:
-        process = _spawn_default_child(store, run_id, heartbeat_interval)
+        process = _spawn_default_child(store, run_id, heartbeat_interval,
+                                       handshake_token=handshake_token)
     pid = int(process.pid) if process is not None else os.getpid()
 
     handshake = _wait_for_handshake(handshake_file, run_id,
-                                     detach_timeout_seconds)
+                                     detach_timeout_seconds,
+                                    handshake_token=handshake_token)
     executable = (str(list(process.args)[0]) if process is not None
                    and getattr(process, "args", None) else
                   "inline")
@@ -615,7 +667,8 @@ def launch_worker(
 
 def run_child(store: PaperStore, run_id: str, *,
               worker_factory: Callable[[PaperStore, str, Any], Any] | None = None,
-              heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL) -> int:
+              heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
+              handshake_token: str | None = None) -> int:
     """The child's main: hold the lock, write the durable handshake, run
     the worker, release the lock on every normal path.
 
@@ -629,10 +682,13 @@ def run_child(store: PaperStore, run_id: str, *,
     work_dir = _work_dir_for(store, run_id)
     guard = acquire_run_lock(store, run_id, interval=heartbeat_interval)
     try:
-        _write_json_atomic(work_dir / "handshake.json", {
+        handshake = {
             "accepted": True, "pid": os.getpid(), "run_id": run_id,
             "start_ts": utc_now_iso(),
-        })
+        }
+        if handshake_token:
+            handshake["token"] = handshake_token
+        _write_json_atomic(work_dir / "handshake.json", handshake)
         factory = worker_factory or (
             lambda s, rid, g: RunWorker(s, rid, lock_guard=g))
         worker = factory(store, run_id, guard)

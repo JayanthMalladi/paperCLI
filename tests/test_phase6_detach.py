@@ -91,7 +91,8 @@ def test_launch_writes_lock_and_handshake(tmp_path):
                            "ts": "", "monotonic": time.monotonic()})
         _write_json_atomic(kw["work_dir"] / "handshake.json",
                           {"accepted": True, "pid": os.getpid(),
-                           "run_id": rid, "start_ts": ""})
+                           "run_id": rid, "start_ts": "",
+                           "token": kw.get("handshake_token")})
         return None  # inline child: no separate process
 
     res = launch_worker(store, rid, child_fn=child_fn)
@@ -138,10 +139,12 @@ def test_launch_with_real_child_handshake(tmp_path):
     hs_file = str(heartbeat_path(store, rid).parent / "handshake.json")
 
     def child_fn(**kw):
+        import uuid as _uuid
+        tok = kw.get("handshake_token") or _uuid.uuid4().hex
         code = (
             "import json, os, sys\n"
             f"json.dump({{'accepted': True, 'pid': os.getpid(), "
-            f"'run_id': {rid!r}}}, open({hs_file!r}, 'w'))\n"
+            f"'run_id': {rid!r}, 'token': {tok!r}}}, open({hs_file!r}, 'w'))\n"
         )
         return subprocess.Popen([sys.executable, "-c", code])
 
