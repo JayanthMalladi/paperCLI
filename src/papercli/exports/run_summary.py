@@ -347,12 +347,17 @@ def build_run_summary(store: PaperStore, run_id: str,
         "generation_status": "complete" if row["state"] in ("completed",) else "partial",
     })
     if requested_formats:
-        RENDERED = ("md", "pdf", "docx")
+        # Every requested rendered/bibliographic format is accounted for:
+        # written (the structured dumps) or explicitly deferred -- never
+        # silently missing (spec section 14). bib is rendered from the
+        # CSL-JSON registry by the Phase-7 BibTeX exporter.
+        RENDERED = ("md", "pdf", "docx", "bib")
         for fmt in requested_formats:
             if fmt in RENDERED:
+                fname = "references.bib" if fmt == "bib" else f"review.{fmt}"
                 artifacts.append({
-                    "type": f"review.{fmt}",
-                    "path": str(run_dir(store, run_id) / f"review.{fmt}"),
+                    "type": fname,
+                    "path": str(run_dir(store, run_id) / fname),
                     "hash": None,
                     "generation_status": "missing",
                     "note": "deferred to Phase 7 (rendered exporters not "
@@ -507,7 +512,7 @@ def write_structured_dumps(store: PaperStore, run_id: str,
     p = write_run_summary(store, run_id, summary, base / "run-summary.json")
     written["run-summary.json"] = str(p)
 
-    deferred = [f for f in requested if f in ("md", "pdf", "docx")]
+    deferred = [f for f in requested if f in ("md", "pdf", "docx", "bib")]
     return {
         "run_id": run_id,
         "written": written,

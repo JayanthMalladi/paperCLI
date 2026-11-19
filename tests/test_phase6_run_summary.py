@@ -149,7 +149,7 @@ def test_structured_dumps_written(tmp_path):
                  "run-summary.json"):
         assert name in out["written"], name
     # Rendered formats are DEFERRED, structured ones written.
-    assert [d["format"] for d in out["deferred"]] == ["md", "pdf", "docx"]
+    assert [d["format"] for d in out["deferred"]] == ["md", "pdf", "docx", "bib"]
     # The summary itself marks them deferred in its artifact inventory.
     s = json.loads((tmp_path / "out" / "run-summary.json").read_text(
         encoding="utf-8"))

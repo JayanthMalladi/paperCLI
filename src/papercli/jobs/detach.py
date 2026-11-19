@@ -323,7 +323,6 @@ class RunLockGuard:
 
     # -- acquire -----------------------------------------------------------
     @staticmethod
-    @staticmethod
     def _check_and_reclaim(store: PaperStore, run_id: str,
                            now_fn: Callable[[], Any] | None) -> dict[str, Any]:
         info = lock_held(store, run_id, now_fn=now_fn)
@@ -348,9 +347,23 @@ class RunLockGuard:
     def acquire(self) -> None:
         self._check_and_reclaim(self.store, self.run_id, self._now_fn)
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        _write_json_atomic(self.lock_file, {
-            "pid": self._pid, "start_ts": utc_now_iso(), "ts": utc_now_iso(),
-        })
+        marker = {"pid": self._pid, "start_ts": utc_now_iso(), "ts": utc_now_iso()}
+        # Exclusive-creation marker (O_EXCL via mode "xb"): only ONE racing
+        # child can create a FRESH lock marker; a loser re-checks and, if the
+        # holder is live, is rejected by the double-check below. This closes
+        # the write->check->write->check TOCTOU window on Windows (D-P6-3).
+        # A torn/invalid marker self-heals: it reads as pid 0 -> stale ->
+        # reclaimable.
+        # "x" = exclusive creation (O_EXCL): only ONE racing child can create
+        # a FRESH marker; a loser self-heals below.
+        try:
+            with open(self.lock_file, "x", encoding="utf-8") as fh:
+                fh.write(json.dumps(marker))
+        except FileExistsError:
+            info = self._check_and_reclaim(self.store, self.run_id, self._now_fn)
+            if info.get("reason") == "reclaimed stale lock":
+                with open(self.lock_file, "x", encoding="utf-8") as fh:
+                    fh.write(json.dumps(marker))
         if os.name == "posix":
             import fcntl
             self._fh = open(str(self.lock_file), "a+")
