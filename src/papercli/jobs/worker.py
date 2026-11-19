@@ -301,6 +301,7 @@ class RunWorker:
         cancel_request: Path | str | None = None,
         retry_delay_seconds: float = _DEFAULT_RETRY_DELAY_SECONDS,
         retry_jitter_seconds: float = _DEFAULT_RETRY_JITTER_SECONDS,
+        lock_guard: Any = None,
     ):
         self.store = store
         self.run_id = run_id
@@ -337,6 +338,7 @@ class RunWorker:
         self._deadline_at: str | None = None
         self._cancel_requested = False
         self._deadline_reached = False
+        self.lock_guard = lock_guard
 
     # -- limits / deadline ----------------------------------------------------
     def wall_deadline(self) -> str | None:
@@ -951,6 +953,12 @@ class RunWorker:
         self._log("run_closed", {"state": state,
                                  "summary": str(summary_path),
                                  "budget": self.shared_budget.to_dict()})
+        if self.lock_guard is not None:
+            # The per-run lock is RELEASED by the child on normal close
+            # (spec section 12); a SIGKILLed child is then detected stale
+            # by its heartbeat age + dead holder PID and reclaimed by a
+            # resume.
+            self.lock_guard.release()
         return summary
 
     def _closure_state(self) -> str:
@@ -1029,3 +1037,38 @@ class RunWorker:
         with self._log_file.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
             fh.flush()
+
+
+# ---------------------------------------------------------------------------
+# Detached child entry (``python -m papercli.jobs.worker``, spec section 12:
+# native process APIs + a durable handshake, no shell surface)
+# ---------------------------------------------------------------------------
+
+def _worker_main(argv: list[str] | None = None) -> int:
+    """The detached child's CLI.
+
+    Parses the arg array and runs :func:`papercli.jobs.detach.run_child`
+    (lock + handshake + worker + lock release on the normal path)."""
+    from papercli.jobs.detach import run_child
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="papercli.jobs.worker",
+        description="Detached PaperCLI worker child (internal entry).")
+    parser.add_argument("--db-path", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--heartbeat-interval", type=float, default=10.0)
+    ns = parser.parse_args(argv)
+
+    from papercli.storage.db import PaperStore
+    store = PaperStore(Path(ns.db_path))
+    try:
+        return run_child(store, ns.run_id,
+                         heartbeat_interval=ns.heartbeat_interval)
+    finally:
+        store.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(_worker_main())
