@@ -314,6 +314,14 @@ class ModelBudget:
                for k in self._DIMS):
             self._mark_exhausted()
 
+    def mark_exhausted(self) -> None:
+        """Public: force the exhaustion flag + reserve the closure slice.
+
+        Idempotent. Phase 6 uses this when restoring a run whose persisted
+        usage already sits at a hard ceiling, so a resume keeps the closure
+        slice reserved (spec section 12) instead of re-opening dispatch."""
+        self._mark_exhausted()
+
     def _mark_exhausted(self) -> None:
         if self._exhausted:
             return

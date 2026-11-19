@@ -15,6 +15,13 @@ from papercli.jobs.tasks import (
     submit,
     SubmissionOutcome,
 )
+from papercli.jobs.worker import (
+    DAG_VERSION,
+    TASK_TYPES,
+    TaskError,
+    ReasoningTaskRunner,
+    RunWorker,
+)
 
 __all__ = [
     "TaskQueue",
@@ -26,4 +33,9 @@ __all__ = [
     "payload_hash_of",
     "submit",
     "SubmissionOutcome",
+    "DAG_VERSION",
+    "TASK_TYPES",
+    "TaskError",
+    "ReasoningTaskRunner",
+    "RunWorker",
 ]
