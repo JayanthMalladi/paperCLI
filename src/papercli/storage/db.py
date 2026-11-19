@@ -323,6 +323,10 @@ class PaperStore:
                 d[col.replace("_json", "")] = json.loads(d.pop(col) or "{}")
             # spec section 9 minimum field name: extraction_warnings
             d["extraction_warnings"] = json.loads(d.pop("warnings_json") or "[]")
+            # Published contract (agent_contract/schemas/evidence.json)
+            # requires the key "evidence_id"; alias it from the stored
+            # primary key so every surfaced record conforms (D-P5-0).
+            d["evidence_id"] = d["id"]
             out.append(d)
         return out
 
