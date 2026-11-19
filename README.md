@@ -294,7 +294,8 @@ valid with hard token/call limits set.
   (SKILL.md + references; exporting does not install it).
 - The user guide: install → run → read the bundle → connect an agent
   (`docs/05-user-guide.md`), the MCP connection guide
-  (`docs/04-mcp-connection.md`), and the honest limitations above.
+  (`docs/04-mcp-connection.md`), the agent-session setup guide
+  (`docs/06-agent-setup.md`), and the honest limitations above.
 
 **Phase 8 – Acceptance + release (spec section 18 step 8)**
 - The robotics pilot brief + validated plan + doctor preflight record

@@ -175,6 +175,10 @@ print(summary["state"], summary["counts"], len(summary["failures"]),
   resume semantics, cancellation + partial bundles.
 * `references/mcp.md` -- connecting through the stdio MCP server
   instead of subprocess calls (same 1:1 tool surface).
+* `docs/06-agent-setup.md` -- initialize PaperCLI from any external
+  agent session (clone, install, `.env` + `config.toml`, then drive
+  it via subprocess or MCP). The setup reference for onboarding a new
+  agent.
 
 ## Out of scope for this skill
 
