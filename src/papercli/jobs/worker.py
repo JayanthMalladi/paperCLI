@@ -398,6 +398,12 @@ class RunWorker:
         usage; an unpriced model keeps a null cost estimate -- never
         treated as free (spec section 12).
         """
+        # Durable usage comes from two sources, taken per-dimension MAX so a
+        # run that billed through the in-memory shared budget (injected-adapter
+        # path, no persisted model-call rows) is still re-derived on resume:
+        #   (a) persisted model_call rows (the production on_record path),
+        #   (b) the checkpointed budget snapshot (written after every task +
+        #       at close -- the authoritative mid-run state, spec section 11).
         calls = self.store.model_calls_for_run(self.run_id)
         billed = [c for c in calls if c.get("outcome") in ("success", "failed")]
         actual = {
@@ -405,8 +411,22 @@ class RunWorker:
             "input_tokens": sum(int(c.get("input_tokens") or 0) for c in calls),
             "output_tokens": sum(int(c.get("output_tokens") or 0) for c in calls),
         }
+        snap = {}
+        row = self.store.run_row(self.run_id)
+        counters = json.loads(row.get("counters_json") or "{}") if row else {}
+        snap = ((counters.get("worker") or {}).get("budget")) or {}
+        snap_actual = snap.get("actual") or {}
+        for k in ("model_calls", "input_tokens", "output_tokens"):
+            actual[k] = max(actual[k], int(snap_actual.get(k) or 0))
+
         budget = ModelBudget(dict(self.limits))
         budget.actual.update(actual)
+        # Carry the checkpointed exhaustion + closure-slice flags forward so a
+        # FRESH worker re-derives a run that already closed exhausted (spec 12).
+        if snap.get("exhausted") or snap.get("partial_synthesis_reserved"):
+            budget._exhausted = True
+            budget.partial_synthesis_reserved = bool(
+                snap.get("partial_synthesis_reserved"))
         if any(
             budget.ceiling.get(k) is not None and actual[k] >= budget.ceiling[k]
             for k in ("model_calls", "input_tokens", "output_tokens")

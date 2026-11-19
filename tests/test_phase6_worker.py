@@ -178,13 +178,17 @@ class _CannedAdapter:
     deficit (usage beyond the reservation) disclosed -- against the run's
     SHARED :class:`ModelBudget` (spec section 12)."""
 
-    def __init__(self, calls, shared_budget):
+    def __init__(self, calls, shared_budget, model: str = "canned-model"):
         self._calls = list(calls)
         self._i = 0
         self.calls_made = 0
         self.last_outcome = None
         self.last_budget_deficit = False
         self._budget = shared_budget
+        # The production reasoning layer records the model identity on every
+        # result (spec section 9: reviewer = model/<id>); a canned backend
+        # must expose the same attribute or screen_uncertain crashes.
+        self.model = model
     def close(self) -> None:
         """No-op: a canned backend holds no resources."""
 
@@ -366,8 +370,11 @@ def test_worker_agent_driven_no_model(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_worker_budget_exhaustion_reserves_closure_slice(tmp_path):
-    # 500 input tokens: the 3rd model call hits the ceiling -> exhaustion.
-    tight = dict(FAKE_LIMITS, max_input_tokens=500)
+    # The canned fixture bills a single model call of 300 input tokens, so a
+    # ceiling of 250 makes that one reconcile cross it -> exhaustion + the
+    # closure slice reserved (spec section 12). A FRESH worker re-derives the
+    # exhausted state from the checkpointed budget snapshot (durable).
+    tight = dict(FAKE_LIMITS, max_input_tokens=250)
     store = _store(tmp_path)
     worker, summary, rid = _run_full(store, model_cfg=_fake_model_cfg(),
                                      limits=tight)
@@ -569,16 +576,25 @@ def test_worker_resume_after_forced_interruption(tmp_path):
     fail_one = all_tasks[3]
     rest = all_tasks[4:]
     past = "2000-01-01T00:00:00.000+00:00"
+    # A forced interruption loses the work that was in flight: the retriable
+    # task -> retry_wait and the rest -> pending, each with its result_hash
+    # cleared (a re-dispatched task is not complete, so it carries no result
+    # yet -- spec section 11 idempotency).
     with conn:
         conn.execute(
             "UPDATE tasks SET state='retry_wait', lease_owner=NULL, "
-            "lease_expires_at=NULL, next_attempt_at=? WHERE id=?",
-            (past, fail_one.task_id))
-        conn.execute("UPDATE tasks SET state='pending', lease_owner=NULL, "
-                     "lease_expires_at=NULL WHERE id=?", (rest[0].task_id,))
+            "lease_expires_at=NULL, next_attempt_at=?, result_hash=NULL "
+            "WHERE id=?", (past, fail_one.task_id))
+        for t in rest:
+            conn.execute("UPDATE tasks SET state='pending', lease_owner=NULL, "
+                         "lease_expires_at=NULL, result_hash=NULL WHERE id=?",
+                         (t.task_id,))
     hashes_before = {t.task_id: t.result_hash for t in keep}
-    for t in rest:
-        assert t.result_hash is None
+    # Read FRESH rows: the reset tasks carry no result until they complete.
+    fresh = {t.task_id: t for t in worker.queue.list(rid)}
+    for t in [fail_one] + list(rest):
+        assert fresh[t.task_id].result_hash is None
+    assert all(fresh[t.task_id].result_hash is not None for t in keep)
 
     # Resume: the worker re-dispatches ONLY the retriable + pending tasks;
     # the 3 succeeded stay byte-identical (result hashes unchanged).
